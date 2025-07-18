@@ -67,7 +67,7 @@ async function sendTelegramMessage(chatId, text, forceSend = false, options = {}
                 await bot.sendMessage(chatId, part, currentOptions);
                 console.log('Message part sent without MarkdownV2 due to error.');
             } catch (fallbackError) {
-                console.error('Fallback send failed:', fallbackError.response ? fallbackError.data : fallbackError.message);
+                console.error('Fallback send failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
             }
         }
     }
@@ -245,11 +245,11 @@ const monitoringKeyboard = {
     }
 };
 
-// Функция для отправки сообщения с определенной клавиатурой
+// --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ ОТПРАВКИ СООБЩЕНИЙ С КЛАВИАТУРОЙ ---
 async function sendMessageWithKeyboard(chatId, text, keyboard, options = {}) {
     await bot.sendMessage(chatId, text, {
-        ...keyboard.reply_markup, // Spreads keyboard properties like 'keyboard', 'resize_keyboard', etc.
-        ...options // Allows overriding or adding other options like parse_mode
+        reply_markup: keyboard.reply_markup, // <-- ИСПРАВЛЕНО
+        ...options // Позволяет переопределять или добавлять другие опции, например parse_mode
     });
 }
 
