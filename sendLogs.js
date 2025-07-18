@@ -31,7 +31,6 @@ const WARNING_KEYWORDS = ['warn', 'warning', 'deprecated', 'unstable', 'notice']
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 // Функция для отправки сообщений в Telegram
-// Эта функция теперь может принимать опции для reply_markup
 async function sendTelegramMessage(chatId, text, forceSend = false, options = {}) {
     if (!text.trim() && !forceSend) {
         return;
@@ -55,17 +54,13 @@ async function sendTelegramMessage(chatId, text, forceSend = false, options = {}
 
     for (const part of parts) {
         try {
-            // Используем MarkdownV2, если текст содержит символы, требующие форматирования (например, ```)
-            // Иначе, можно отправлять как обычный текст
-            // Мы будем принудительно использовать MarkdownV2 для сообщений с кодом или жирным шрифтом
             await bot.sendMessage(chatId, part, { parse_mode: 'MarkdownV2', ...options });
             console.log('Message part sent to Telegram with MarkdownV2.');
         } catch (error) {
             console.error('Error sending message to Telegram (MarkdownV2 failed):', error.response ? error.response.data : error.message);
-            // Fallback to plain text if MarkdownV2 fails, remove markdown formatting
             try {
                 const plainPart = part.replace(/```/g, '').replace(/\*/g, '').replace(/_/g, '');
-                await bot.sendMessage(chatId, plainPart, options); // Pass options here as well
+                await bot.sendMessage(chatId, plainPart, options);
                 console.log('Message part sent without MarkdownV2 due to error.');
             } catch (fallbackError) {
                 console.error('Fallback send failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
@@ -113,28 +108,25 @@ function processLogFile(filePath, lastPositionRef, type) {
         if (currentSize > lastPositionRef.value) {
             const stream = fs.createReadStream(filePath, { start: lastPositionRef.value, encoding: 'utf8' });
             let buffer = '';
-            let unprocessedLines = ''; // Для хранения неполных строк
+            let unprocessedLines = '';
 
             stream.on('data', (chunk) => {
                 const lines = (unprocessedLines + chunk).split('\n');
-                unprocessedLines = lines.pop(); // Последняя строка может быть неполной
+                unprocessedLines = lines.pop();
 
                 for (const line of lines) {
-                    if (line.trim() === '') continue; // Пропускаем пустые строки
+                    if (line.trim() === '') continue;
 
                     const alertType = checkLogForKeywords(line);
                     if (alertType) {
-                        // Используем MarkdownV2 для жирного шрифта и моноширинного блока
                         sendTelegramMessage(CHAT_ID, `🚨 *${alertType}* (${PM2_APP_NAME})\n\`\`\`\n${line}\n\`\`\``, true);
                     } else {
-                        // Используем MarkdownV2 для жирного шрифта и моноширинного блока
                         sendTelegramMessage(CHAT_ID, `[${type.toUpperCase()} - *${PM2_APP_NAME}* - NEW]\n\`\`\`\n${line}\n\`\`\``);
                     }
                 }
             });
 
             stream.on('end', () => {
-                // Обработать оставшуюся неполную строку, если она есть
                 if (unprocessedLines.trim() !== '') {
                     const alertType = checkLogForKeywords(unprocessedLines);
                     if (alertType) {
@@ -219,25 +211,61 @@ bot.onText(/\/start/, (msg) => {
     }
     const welcomeMessage = 'Привет! Я бот для логов PM2. Используйте кнопки ниже для быстрого доступа к командам:';
 
-    // *** ИСПОЛЬЗУЕМ ReplyKeyboardMarkup ***
     const opts = {
         reply_markup: {
             keyboard: [
-                [{ text: '/logs 20' }, { text: '/status' }],
-                [{ text: '/restart_server_site' }, { text: '/stop_server_site' }, { text: '/start_server_site' }],
-                [{ text: '/list_all_apps' }, { text: '/check_system_health' }]
+                // Измененные тексты кнопок
+                [{ text: 'Показать последние 20 логов' }, { text: 'Проверить статус приложения' }],
+                [{ text: 'Перезапустить сервер' }, { text: 'Остановить сервер' }, { text: 'Запустить сервер' }],
+                [{ text: 'Список всех PM2 приложений' }, { text: 'Проверить состояние системы' }]
             ],
-            resize_keyboard: true, // Уменьшает размер кнопок
-            one_time_keyboard: false // Кнопки остаются после использования
+            resize_keyboard: true,
+            one_time_keyboard: false
         }
     };
     bot.sendMessage(chatId, welcomeMessage, opts);
 });
 
-// Callback queries are not used with Reply Keyboards, so we remove the handler.
-// bot.on('callback_query', ...); // REMOVED
+// Поскольку Reply кнопки отправляют текст, нам нужно изменить bot.onText,
+// чтобы он реагировал на новые, "красивые" тексты кнопок.
+// ИЛИ, что более надежно, использовать существующие обработчики,
+// а кнопки просто будут отправлять исходные команды.
+// Давайте сделаем кнопки, которые отправляют *команды*, но с красивым текстом.
 
-// Refactored command handlers remain the same as they are called by the text commands
+bot.onText(/Показать последние 20 логов/, async (msg) => {
+    // Вызываем оригинальный обработчик команды /logs 20
+    await handleLogsCommand(msg.chat.id, 20);
+});
+
+bot.onText(/Проверить статус приложения/, async (msg) => {
+    await handleStatusCommand(msg.chat.id);
+});
+
+bot.onText(/Перезапустить сервер/, async (msg) => {
+    await handleRestartCommand(msg.chat.id);
+});
+
+bot.onText(/Остановить сервер/, async (msg) => {
+    await handleStopCommand(msg.chat.id);
+});
+
+bot.onText(/Запустить сервер/, async (msg) => {
+    await handleStartCommand(msg.chat.id);
+});
+
+bot.onText(/Список всех PM2 приложений/, async (msg) => {
+    await handleListAllAppsCommand(msg.chat.id);
+});
+
+bot.onText(/Проверить состояние системы/, async (msg) => {
+    await handleCheckSystemHealthCommand(msg.chat.id);
+});
+
+
+// Старые обработчики команд остаются, чтобы можно было вводить команды вручную
+// или если текст кнопки совпадает с командой.
+// Для /logs у нас уже есть regex, который обрабатывает и /logs 20 и просто /logs.
+// bot.onText(/\/logs(?:@\w+)?(?:\s+(\d+))?/, ...); // Эта остаётся
 
 async function handleLogsCommand(chatId, linesToFetch) {
     if (isNaN(linesToFetch) || linesToFetch <= 0) {
@@ -506,7 +534,6 @@ async function handleCheckSystemHealthCommand(chatId) {
     await sendTelegramMessage(chatId, 'Выполняю ручную проверку состояния системы...');
     await checkSystemHealth();
 }
-// Команда для ручной проверки состояния системы
 bot.onText(/\/check_system_health/, async (msg) => {
     await handleCheckSystemHealthCommand(msg.chat.id);
 });
@@ -559,5 +586,4 @@ console.log('PM2 Log & Status Telegram Bot is running and listening for commands
 // Обработка ошибок бота
 bot.on('polling_error', (error) => {
     console.error('Polling error:', error.code, error.message);
-    // bot.sendMessage(CHAT_ID, `❗️ Ошибкаpolling: ${error.code} - ${error.message}`); // Можно включить для уведомлений об ошибках самого бота
 });
