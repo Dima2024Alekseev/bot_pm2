@@ -206,7 +206,9 @@ bot.onText(/\/start/, (msg) => {
     bot.sendMessage(chatId, 'Привет! Я бот для логов PM2. Используйте:\n' +
         '- /logs <количество_строк> для получения последних логов.\n' +
         '- /status для проверки состояния вашего приложения.\n' +
-        '- /restart_server_site для перезапуска вашего приложения.');
+        '- /restart_server_site для перезапуска вашего приложения.\n' +
+        '- /stop_server_site для остановки вашего приложения.\n' + // Добавлено
+        '- /start_server_site для запуска вашего приложения.');   // Добавлено
 });
 
 bot.onText(/\/logs(?:@\w+)?(?:\s+(\d+))?/, async (msg, match) => {
@@ -260,6 +262,48 @@ bot.onText(/\/restart_server_site/, async (msg) => {
         }
         await sendTelegramMessage(chatId, `🟢 ${PM2_APP_NAME} успешно запрошен на перезапуск.`);
         // PM2 также отправит событие 'restart', которое будет перехвачено и отправлено ботом.
+    });
+});
+
+// Добавляем обработчик команды для остановки
+bot.onText(/\/stop_server_site/, async (msg) => {
+    const chatId = msg.chat.id;
+    if (String(chatId) !== String(CHAT_ID)) {
+        await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
+        return;
+    }
+
+    await sendTelegramMessage(chatId, `Запрос на остановку ${PM2_APP_NAME}...`);
+
+    pm2.stop(PM2_APP_NAME, async (err) => {
+        if (err) {
+            console.error(`Error stopping ${PM2_APP_NAME}:`, err.message);
+            await sendTelegramMessage(chatId, `🔴 Ошибка при остановке ${PM2_APP_NAME}: ${err.message}`);
+            return;
+        }
+        await sendTelegramMessage(chatId, `⚫️ ${PM2_APP_NAME} успешно запрошен на остановку.`);
+        // PM2 также отправит событие 'stop', которое будет перехвачено и отправлено ботом.
+    });
+});
+
+// Добавляем обработчик команды для запуска
+bot.onText(/\/start_server_site/, async (msg) => {
+    const chatId = msg.chat.id;
+    if (String(chatId) !== String(CHAT_ID)) {
+        await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
+        return;
+    }
+
+    await sendTelegramMessage(chatId, `Запрос на запуск ${PM2_APP_NAME}...`);
+
+    pm2.start(PM2_APP_NAME, async (err) => {
+        if (err) {
+            console.error(`Error starting ${PM2_APP_NAME}:`, err.message);
+            await sendTelegramMessage(chatId, `🔴 Ошибка при запуске ${PM2_APP_NAME}: ${err.message}`);
+            return;
+        }
+        await sendTelegramMessage(chatId, `🟢 ${PM2_APP_NAME} успешно запрошен на запуск.`);
+        // PM2 также отправит событие 'online', которое будет перехвачено и отправлено ботом.
     });
 });
 
@@ -327,11 +371,11 @@ bot.onText(/\/status/, async (msg) => {
 
         if (app) {
             let statusMessage = `📊 Статус ${PM2_APP_NAME}:\n`;
-            statusMessage += `  Статус: ${app.pm2_env.status}\n`;
-            statusMessage += `  Uptime: ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
-            statusMessage += `  Перезапусков: ${app.pm2_env.restart_time}\n`;
-            statusMessage += `  Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
-            statusMessage += `  CPU: ${app.monit.cpu}%\n`;
+            statusMessage += `   Статус: ${app.pm2_env.status}\n`;
+            statusMessage += `   Uptime: ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
+            statusMessage += `   Перезапусков: ${app.pm2_env.restart_time}\n`;
+            statusMessage += `   Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
+            statusMessage += `   CPU: ${app.monit.cpu}%\n`;
             await sendTelegramMessage(chatId, statusMessage);
         } else {
             await sendTelegramMessage(chatId, `Приложение ${PM2_APP_NAME} не найдено в PM2.`);
@@ -346,4 +390,4 @@ console.log('PM2 Log & Status Telegram Bot is running and listening for commands
 bot.on('polling_error', (error) => {
     console.error('Polling error:', error.code, error.message);
     // bot.sendMessage(CHAT_ID, `❗️ Ошибкаpolling: ${error.code} - ${error.message}`); // Можно включить для уведомлений об ошибках самого бота
-}); 
+});
