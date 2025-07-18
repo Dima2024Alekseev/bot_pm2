@@ -55,7 +55,7 @@ async function sendTelegramMessage(chatId, text, forceSend = false) {
                 await bot.sendMessage(chatId, part);
                 console.log('Message part sent without MarkdownV2 due to error.');
             } catch (fallbackError) {
-                console.error('Fallback send failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
+                console.error('Fallback send failed:', fallbackError.response ? fallbackError.data : fallbackError.message);
             }
         }
     }
@@ -203,7 +203,10 @@ bot.onText(/\/start/, (msg) => {
         bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
         return;
     }
-    bot.sendMessage(chatId, 'Привет! Я бот для логов PM2. Используйте /logs <количество_строк> для получения последних логов. Используйте /status для проверки состояния вашего приложения.');
+    bot.sendMessage(chatId, 'Привет! Я бот для логов PM2. Используйте:\n' +
+        '- /logs <количество_строк> для получения последних логов.\n' +
+        '- /status для проверки состояния вашего приложения.\n' +
+        '- /restart_server_site для перезапуска вашего приложения.');
 });
 
 bot.onText(/\/logs(?:@\w+)?(?:\s+(\d+))?/, async (msg, match) => {
@@ -236,6 +239,27 @@ bot.onText(/\/logs(?:@\w+)?(?:\s+(\d+))?/, async (msg, match) => {
             return;
         }
         await sendTelegramMessage(chatId, `[ERR - ${PM2_APP_NAME} - ЗАПРОС ${linesToFetch}]\n${errLogs || 'Нет записей в ERR логе.'}`);
+    });
+});
+
+// Добавляем обработчик команды для перезапуска
+bot.onText(/\/restart_server_site/, async (msg) => {
+    const chatId = msg.chat.id;
+    if (String(chatId) !== String(CHAT_ID)) {
+        await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
+        return;
+    }
+
+    await sendTelegramMessage(chatId, `Запрос на перезапуск ${PM2_APP_NAME}...`);
+
+    pm2.restart(PM2_APP_NAME, async (err, apps) => {
+        if (err) {
+            console.error(`Error restarting ${PM2_APP_NAME}:`, err.message);
+            await sendTelegramMessage(chatId, `🔴 Ошибка при перезапуске ${PM2_APP_NAME}: ${err.message}`);
+            return;
+        }
+        await sendTelegramMessage(chatId, `🟢 ${PM2_APP_NAME} успешно запрошен на перезапуск.`);
+        // PM2 также отправит событие 'restart', которое будет перехвачено и отправлено ботом.
     });
 });
 
