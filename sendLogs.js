@@ -4,11 +4,11 @@ const path = require('path');
 const chokidar = require('chokidar');
 const TelegramBot = require('node-telegram-bot-api');
 const pm2 = require('pm2');
-const { getDrives } = require('node-disk-info'); // ИСПРАВЛЕНО: Деструктуризация для получения getDrives
+const { getDrives } = require('node-disk-info');
 
 // *** НАСТРОЙТЕ ЭТИ ПЕРЕМЕННЫЕ ***
 const BOT_TOKEN = '8127032296:AAH7Vxg7v5I_6M94oZbidNvtyPEAFQVEPds'; // Ваш токен бота
-const CHAT_ID = '1364079703';     // Ваш Chat ID (может быть числом или стровой)
+const CHAT_ID = '1364079703';     // Ваш Chat ID (может быть числом или строкой)
 const PM2_APP_NAME = 'server-site'; // Имя вашего PM2-приложения
 
 // Пороги для оповещений
@@ -55,7 +55,7 @@ async function sendTelegramMessage(chatId, text, forceSend = false, options = {}
     for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
         try {
-            // Применяем parse_mode и options только к первому сообщению или ко всем, если нет разбивки
+            // Применяем parse_mode и options только к первому сообщению
             const currentOptions = i === 0 ? { parse_mode: 'MarkdownV2', ...options } : { parse_mode: 'MarkdownV2' };
             await bot.sendMessage(chatId, `\`\`\`\n${part}\n\`\`\``, currentOptions);
             console.log('Message part sent to Telegram.');
@@ -72,7 +72,6 @@ async function sendTelegramMessage(chatId, text, forceSend = false, options = {}
         }
     }
 }
-
 
 // --- Функционал отслеживания новых логов в реальном времени и поиска ключевых слов ---
 
@@ -125,15 +124,12 @@ function processLogFile(filePath, lastPositionRef, type) {
                     if (alertType) {
                         sendTelegramMessage(CHAT_ID, `🚨 ${alertType} (${PM2_APP_NAME})\n\`\`\`\n${line}\n\`\`\``);
                     } else {
-                        // Отправляем обычные логи только если они новые и не содержат критических слов
-                        // Для запроса логов используется отдельная функция
                         sendTelegramMessage(CHAT_ID, `[${type.toUpperCase()} - ${PM2_APP_NAME} - NEW]\n${line}`);
                     }
                 }
             });
 
             stream.on('end', () => {
-                // Обработать оставшуюся неполную строку, если она есть
                 if (unprocessedLines.trim() !== '') {
                     const alertType = checkLogForKeywords(unprocessedLines);
                     if (alertType) {
@@ -210,18 +206,17 @@ function readLastLines(filePath, numLines, callback) {
     });
 }
 
-// --- Кнопки для команд ---
+// --- Кнопки для команд (ReplyKeyboardMarkup) ---
 const mainKeyboard = {
     reply_markup: {
-        inline_keyboard: [
-            [{ text: 'Показать статус', callback_data: '/status' }],
-            [{ text: 'Последние 20 логов', callback_data: '/logs 20' }],
-            [{ text: 'Проверить состояние системы', callback_data: '/check_system_health' }],
-            [{ text: 'Список всех приложений PM2', callback_data: '/list_all_apps' }],
-            [{ text: 'Перезапустить сервер', callback_data: '/restart_server_site' }],
-            [{ text: 'Остановить сервер', callback_data: '/stop_server_site' }],
-            [{ text: 'Запустить сервер', callback_data: '/start_server_site' }]
-        ]
+        keyboard: [
+            [{ text: '/status' }, { text: '/logs 20' }],
+            [{ text: '/check_system_health' }, { text: '/list_all_apps' }],
+            [{ text: '/restart_server_site' }],
+            [{ text: '/stop_server_site' }, { text: '/start_server_site' }]
+        ],
+        resize_keyboard: true, // Сделать клавиатуру меньше и адаптивной
+        one_time_keyboard: false // Оставить клавиатуру видимой после использования
     }
 };
 
@@ -231,44 +226,13 @@ bot.onText(/\/start/, (msg) => {
         bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
         return;
     }
+    // Отправляем сообщение с клавиатурой
     bot.sendMessage(chatId, 'Привет! Я бот для логов PM2. Выберите действие:', mainKeyboard);
 });
 
-// Обработка коллбэков от кнопок
-bot.on('callback_query', async (callbackQuery) => {
-    const message = callbackQuery.message;
-    const chatId = message.chat.id;
-    const data = callbackQuery.data;
-
-    if (String(chatId) !== String(CHAT_ID)) {
-        bot.answerCallbackQuery(callbackQuery.id, { text: 'Извините, у вас нет доступа.' });
-        return;
-    }
-
-    // Отвечаем на коллбэк, чтобы убрать "часики" с кнопки
-    bot.answerCallbackQuery(callbackQuery.id);
-
-    // Имитируем текстовую команду, чтобы повторно использовать существующие обработчики
-    // Проверяем, если это команда /logs, то парсим количество строк
-    if (data.startsWith('/logs')) {
-        const parts = data.split(' ');
-        const lines = parts.length > 1 ? parseInt(parts[1], 10) : 20;
-        await bot.processUpdate({
-            message: {
-                chat: { id: chatId },
-                text: `/logs ${lines}`
-            }
-        });
-    } else {
-        await bot.processUpdate({
-            message: {
-                chat: { id: chatId },
-                text: data
-            }
-        });
-    }
-});
-
+// Все обработчики команд остаются без изменений, так как кнопки отправляют те же текстовые команды
+// Например, если пользователь нажмет кнопку с текстом "/status", это будет обработано тем же bot.onText(/\/status/
+// Поэтому, `callback_query` handler больше не нужен.
 
 bot.onText(/\/logs(?:@\w+)?(?:\s+(\d+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
@@ -320,7 +284,6 @@ bot.onText(/\/restart_server_site/, async (msg) => {
             return;
         }
         await sendTelegramMessage(chatId, `🟢 ${PM2_APP_NAME} успешно запрошен на перезапуск.`);
-        // PM2 также отправит событие 'restart', которое будет перехвачено и отправлено ботом.
     });
 });
 
@@ -341,7 +304,6 @@ bot.onText(/\/stop_server_site/, async (msg) => {
             return;
         }
         await sendTelegramMessage(chatId, `⚫️ ${PM2_APP_NAME} успешно запрошен на остановку.`);
-        // PM2 также отправит событие 'stop', которое будет перехвачено и отправлено ботом.
     });
 });
 
@@ -362,7 +324,6 @@ bot.onText(/\/start_server_site/, async (msg) => {
             return;
         }
         await sendTelegramMessage(chatId, `🟢 ${PM2_APP_NAME} успешно запрошен на запуск.`);
-        // PM2 также отправит событие 'online', которое будет перехвачено и отправлено ботом.
     });
 });
 
@@ -461,7 +422,7 @@ async function checkSystemHealth() {
 
     // Проверка места на диске
     try {
-        const drives = await getDrives(); // ИСПРАВЛЕНО: используем getDrives() напрямую
+        const drives = await getDrives();
         let diskInfo = '';
         drives.forEach(drive => {
             const usedPercent = (drive.used / drive.total * 100).toFixed(2);
@@ -489,7 +450,7 @@ async function checkSystemHealth() {
             healthMessage += `🔴 Ошибка при получении списка PM2 приложений для проверки: ${err.message}\n`;
             console.error('Error listing PM2 processes for health check:', err.message);
             alertCount++;
-            await sendTelegramMessage(CHAT_ID, healthMessage, true); // Отправляем, даже если есть ошибка PM2
+            await sendTelegramMessage(CHAT_ID, healthMessage, true);
             return;
         }
 
@@ -531,9 +492,8 @@ bot.onText(/\/check_system_health/, async (msg) => {
         return;
     }
     await sendTelegramMessage(chatId, 'Выполняю ручную проверку состояния системы...');
-    await checkSystemHealth(); // Выполняем проверку немедленно
+    await checkSystemHealth();
 });
-
 
 // 2. Список всех приложений PM2
 bot.onText(/\/list_all_apps/, async (msg) => {
@@ -573,11 +533,10 @@ bot.onText(/\/list_all_apps/, async (msg) => {
     });
 });
 
-
 console.log('PM2 Log & Status Telegram Bot is running and listening for commands and events...');
 
 // Обработка ошибок бота
 bot.on('polling_error', (error) => {
     console.error('Polling error:', error.code, error.message);
-    // bot.sendMessage(CHAT_ID, `❗️ Ошибкаpolling: ${error.code} - ${error.message}`); // Можно включить для уведомлений об ошибках самого бота
+    // bot.sendMessage(CHAT_ID, `❗️ Ошибкаpolling: ${error.code} - ${error.message}`);
 });
