@@ -25,19 +25,17 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 // --- Вспомогательные функции для экранирования Markdown ---
 
 // Экранирует символы MarkdownV2 для обычного текста (вне блоков кода)
+// Используется для заголовков, имен приложений и т.д.
 const escapeMarkdownV2Text = (str) => {
     // Символы, которые имеют значение в MarkdownV2, если они не являются частью кода
     // Экранируем их, чтобы они отображались как есть.
     return str.replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1');
 };
 
-// Экранирует символ обратной кавычки (`) внутри блока кода
-const escapeCodeBlockContent = (str) => {
-    return str.replace(/`/g, '\\`');
-};
-
-// Функция для отправки сообщений в Telegram (улучшена для форматирования и разбиения)
-async function sendTelegramMessage(chatId, text, parseMode = 'MarkdownV2', options = {}) {
+// --- Функция для отправки сообщений в Telegram ---
+// Убрали parseMode по умолчанию, чтобы явно указывать его для каждого вызова.
+// Изменили логику для логов: они отправляются без MarkdownV2.
+async function sendTelegramMessage(chatId, text, options = {}) {
     if (!text || !text.trim()) {
         return;
     }
@@ -46,13 +44,13 @@ async function sendTelegramMessage(chatId, text, parseMode = 'MarkdownV2', optio
     let remainingText = text;
     let parts = [];
 
+    // Разбиваем сообщение на части
     while (remainingText.length > 0) {
         let part = remainingText.substring(0, MAX_MESSAGE_LENGTH);
         let lastNewline = part.lastIndexOf('\n');
 
         // Если часть ровно MAX_MESSAGE_LENGTH, и в ней есть новая строка,
         // обрезаем до нее, чтобы не ломать строки логов.
-        // Или если оставшийся текст больше MAX_MESSAGE_LENGTH, обрезаем по newline.
         if (lastNewline !== -1 && (part.length === MAX_MESSAGE_LENGTH || remainingText.length > MAX_MESSAGE_LENGTH)) {
             part = part.substring(0, lastNewline);
             remainingText = remainingText.substring(lastNewline + 1);
@@ -63,33 +61,16 @@ async function sendTelegramMessage(chatId, text, parseMode = 'MarkdownV2', optio
     }
 
     for (let i = 0; i < parts.length; i++) {
-        let part = parts[i];
-        let messageToSend;
-
-        if (parseMode === 'MarkdownV2') {
-            // Для логов и любого текста, который мы хотим обернуть в ```,
-            // применяем escapeCodeBlockContent
-            messageToSend = `\`\`\`\n${escapeCodeBlockContent(part)}\n\`\`\``;
-        } else {
-            // Для обычного текста без MarkdownV2
-            messageToSend = part;
-        }
-
+        const part = parts[i];
         try {
             // Если это последняя часть, передаем options (с кнопками)
-            const currentOptions = (i === parts.length - 1) ? { parse_mode: parseMode, ...options } : { parse_mode: parseMode };
-            await bot.sendMessage(chatId, messageToSend, currentOptions);
+            const currentOptions = (i === parts.length - 1) ? { ...options } : {};
+            await bot.sendMessage(chatId, part, currentOptions);
             console.log(`Message part ${i + 1}/${parts.length} sent to Telegram.`);
         } catch (error) {
-            console.error(`Error sending message part ${i + 1}/${parts.length} (attempt with ${parseMode} failed):`, error.response ? error.response.data : error.message);
-            // Попробуем отправить как plain text, если MarkdownV2 не сработал
-            try {
-                const currentOptions = (i === parts.length - 1) ? options : {}; // Опции только для последней части
-                await bot.sendMessage(chatId, part, currentOptions); // Отправляем без форматирования
-                console.log('Message part sent as plain text due to error.');
-            } catch (fallbackError) {
-                console.error('Fallback send failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
-            }
+            console.error(`Error sending message part ${i + 1}/${parts.length}:`, error.response ? error.response.data : error.message);
+            // Если и обычная отправка не сработала, сообщаем об этом.
+            console.error('Failed to send message even without formatting. Check Telegram API errors.');
         }
     }
 }
@@ -145,11 +126,13 @@ function processLogFile(filePath, lastPositionRef, type) {
                     const alertType = checkLogForKeywords(line);
                     if (alertType) {
                         const emoji = alertType === 'CRITICAL' ? '🚨' : '⚠️';
-                        // При отправке alerts и new logs, сам текст лога будет внутри ```` ``` ````,
-                        // поэтому достаточно экранировать только символы разметки в заголовке.
-                        sendTelegramMessage(CHAT_ID, `${emoji} *${alertType} ALERT* (${escapeMarkdownV2Text(PM2_APP_NAME)}):\n${line}`);
+                        // Отправляем заголовок с MarkdownV2, сам лог - без MarkdownV2
+                        bot.sendMessage(CHAT_ID, `${emoji} *${alertType} ALERT* (${escapeMarkdownV2Text(PM2_APP_NAME)}):`, { parse_mode: 'MarkdownV2' });
+                        sendTelegramMessage(CHAT_ID, line); // Сам лог без форматирования
                     } else {
-                        sendTelegramMessage(CHAT_ID, `📝 *Новый лог* [${type.toUpperCase()} - ${escapeMarkdownV2Text(PM2_APP_NAME)}]:\n${line}`);
+                        // Для новых обычных логов
+                        bot.sendMessage(CHAT_ID, `📝 *Новый лог* [${type.toUpperCase()} - ${escapeMarkdownV2Text(PM2_APP_NAME)}]:`, { parse_mode: 'MarkdownV2' });
+                        sendTelegramMessage(CHAT_ID, line); // Сам лог без форматирования
                     }
                 }
             });
@@ -159,9 +142,11 @@ function processLogFile(filePath, lastPositionRef, type) {
                     const alertType = checkLogForKeywords(unprocessedLines);
                     if (alertType) {
                         const emoji = alertType === 'CRITICAL' ? '🚨' : '⚠️';
-                        sendTelegramMessage(CHAT_ID, `${emoji} *${alertType} ALERT* (${escapeMarkdownV2Text(PM2_APP_NAME)}):\n${unprocessedLines}`);
+                        bot.sendMessage(CHAT_ID, `${emoji} *${alertType} ALERT* (${escapeMarkdownV2Text(PM2_APP_NAME)}):`, { parse_mode: 'MarkdownV2' });
+                        sendTelegramMessage(CHAT_ID, unprocessedLines);
                     } else {
-                        sendTelegramMessage(CHAT_ID, `📝 *Новый лог* [${type.toUpperCase()} - ${escapeMarkdownV2Text(PM2_APP_NAME)}]:\n${unprocessedLines}`);
+                        bot.sendMessage(CHAT_ID, `📝 *Новый лог* [${type.toUpperCase()} - ${escapeMarkdownV2Text(PM2_APP_NAME)}]:`, { parse_mode: 'MarkdownV2' });
+                        sendTelegramMessage(CHAT_ID, unprocessedLines);
                     }
                 }
                 lastPositionRef.value = currentSize;
@@ -218,6 +203,7 @@ watcher
 
 function readLastLines(filePath, numLines, callback) {
     if (!fs.existsSync(filePath)) {
+        // Здесь используется bot.sendMessage напрямую, чтобы можно было указать parse_mode
         return callback(null, `Файл логов не найден: ${escapeMarkdownV2Text(filePath)}`);
     }
 
@@ -271,7 +257,7 @@ bot.onText(/\/logs(?:@\w+)?(?:\s+(\d+))?/, async (msg, match) => {
     const linesToFetch = match[1] ? parseInt(match[1], 10) : 20;
 
     if (isNaN(linesToFetch) || linesToFetch <= 0) {
-        await sendTelegramMessage(chatId, '❌ Пожалуйста, укажите корректное число строк (например: `/logs 50`)', 'MarkdownV2');
+        await sendTelegramMessage(chatId, '❌ Пожалуйста, укажите корректное число строк (например: `/logs 50`)', { parse_mode: 'MarkdownV2' });
         return;
     }
 
@@ -280,19 +266,22 @@ bot.onText(/\/logs(?:@\w+)?(?:\s+(\d+))?/, async (msg, match) => {
 
 // Новая функция для отправки логов и кнопок
 async function sendLogsAndButtons(chatId, linesToFetch) {
-    await sendTelegramMessage(chatId, `🔍 Запрашиваю последние *${linesToFetch}* строк логов для *${escapeMarkdownV2Text(PM2_APP_NAME)}*...`, 'MarkdownV2');
+    // Отправляем заголовок с MarkdownV2
+    await bot.sendMessage(chatId, `🔍 Запрашиваю последние *${linesToFetch}* строк логов для *${escapeMarkdownV2Text(PM2_APP_NAME)}*...`, { parse_mode: 'MarkdownV2' });
 
     readLastLines(LOG_FILE_OUT, linesToFetch, async (err, outLogs) => {
         if (err) {
-            await sendTelegramMessage(chatId, `🔴 Ошибка при чтении OUT логов: ${escapeMarkdownV2Text(err.message)}`, 'MarkdownV2');
+            await bot.sendMessage(chatId, `🔴 Ошибка при чтении OUT логов: ${escapeMarkdownV2Text(err.message)}`, { parse_mode: 'MarkdownV2' });
             return;
         }
-        await sendTelegramMessage(chatId, `📋 *OUT лог (${escapeMarkdownV2Text(PM2_APP_NAME)} - последние ${linesToFetch} строк):*\n${outLogs || '_Нет записей в OUT логе._'}`, 'MarkdownV2');
+        // Заголовок с MarkdownV2, сам лог без MarkdownV2
+        await bot.sendMessage(chatId, `📋 *OUT лог (${escapeMarkdownV2Text(PM2_APP_NAME)} - последние ${linesToFetch} строк):*`, { parse_mode: 'MarkdownV2' });
+        await sendTelegramMessage(chatId, outLogs || 'Нет записей в OUT логе.');
     });
 
     readLastLines(LOG_FILE_ERR, linesToFetch, async (err, errLogs) => {
         if (err) {
-            await sendTelegramMessage(chatId, `🔴 Ошибка при чтении ERR логов: ${escapeMarkdownV2Text(err.message)}`, 'MarkdownV2');
+            await bot.sendMessage(chatId, `🔴 Ошибка при чтении ERR логов: ${escapeMarkdownV2Text(err.message)}`, { parse_mode: 'MarkdownV2' });
             return;
         }
         const inlineKeyboard = {
@@ -308,7 +297,9 @@ async function sendLogsAndButtons(chatId, linesToFetch) {
                 ]
             ]
         };
-        await sendTelegramMessage(chatId, `🔥 *ERR лог (${escapeMarkdownV2Text(PM2_APP_NAME)} - последние ${linesToFetch} строк):*\n${errLogs || '_Нет записей в ERR логе._'}`, 'MarkdownV2', { reply_markup: inlineKeyboard });
+        // Заголовок с MarkdownV2, сам лог без MarkdownV2, но с кнопками
+        await bot.sendMessage(chatId, `🔥 *ERR лог (${escapeMarkdownV2Text(PM2_APP_NAME)} - последние ${linesToFetch} строк):*`, { parse_mode: 'MarkdownV2' });
+        await sendTelegramMessage(chatId, errLogs || 'Нет записей в ERR логе.', { reply_markup: inlineKeyboard });
     });
 }
 
@@ -316,19 +307,19 @@ async function sendLogsAndButtons(chatId, linesToFetch) {
 bot.onText(/\/restart_server_site/, async (msg) => {
     const chatId = msg.chat.id;
     if (String(chatId) !== String(CHAT_ID)) {
-        await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
+        await bot.sendMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
         return;
     }
 
-    await sendTelegramMessage(chatId, `🔄 Запрос на перезапуск *${escapeMarkdownV2Text(PM2_APP_NAME)}*...`, 'MarkdownV2');
+    await bot.sendMessage(chatId, `🔄 Запрос на перезапуск *${escapeMarkdownV2Text(PM2_APP_NAME)}*...`, { parse_mode: 'MarkdownV2' });
 
     pm2.restart(PM2_APP_NAME, async (err, apps) => {
         if (err) {
             console.error(`Error restarting ${PM2_APP_NAME}:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 *Ошибка при перезапуске ${escapeMarkdownV2Text(PM2_APP_NAME)}:* ${escapeMarkdownV2Text(err.message)}`, 'MarkdownV2');
+            await bot.sendMessage(chatId, `🔴 *Ошибка при перезапуске ${escapeMarkdownV2Text(PM2_APP_NAME)}:* ${escapeMarkdownV2Text(err.message)}`, { parse_mode: 'MarkdownV2' });
             return;
         }
-        await sendTelegramMessage(chatId, `✅ *${escapeMarkdownV2Text(PM2_APP_NAME)}* успешно запрошен на перезапуск\\. Ожидайте уведомления от PM2\\.`, 'MarkdownV2');
+        await bot.sendMessage(chatId, `✅ *${escapeMarkdownV2Text(PM2_APP_NAME)}* успешно запрошен на перезапуск\\. Ожидайте уведомления от PM2\\.`, { parse_mode: 'MarkdownV2' });
     });
 });
 
@@ -338,7 +329,7 @@ pm2.connect(function(err) {
     if (err) {
         console.error('Error connecting to PM2:', err.message);
         // Экранируем сообщение об ошибке, так как оно может содержать спецсимволы
-        sendTelegramMessage(CHAT_ID, `🚨 *КРИТИЧЕСКАЯ ОШИБКА*: Не удалось подключиться к PM2\\. ${escapeMarkdownV2Text(err.message)}`, 'MarkdownV2');
+        sendTelegramMessage(CHAT_ID, `🚨 *КРИТИЧЕСКАЯ ОШИБКА*: Не удалось подключиться к PM2\\. ${escapeMarkdownV2Text(err.message)}`, { parse_mode: 'MarkdownV2' });
         return;
     }
 
@@ -347,7 +338,7 @@ pm2.connect(function(err) {
     pm2.launchBus(function(err, bus) {
         if (err) {
             console.error('Error launching PM2 bus:', err.message);
-            sendTelegramMessage(CHAT_ID, `🚨 *КРИТИЧЕСКАЯ ОШИБКА*: Не удалось запустить шину событий PM2\\. ${escapeMarkdownV2Text(err.message)}`, 'MarkdownV2');
+            sendTelegramMessage(CHAT_ID, `🚨 *КРИТИЧЕСКАЯ ОШИБКА*: Не удалось запустить шину событий PM2\\. ${escapeMarkdownV2Text(err.message)}`, { parse_mode: 'MarkdownV2' });
             return;
         }
 
@@ -375,7 +366,7 @@ pm2.connect(function(err) {
                         message += `ℹ️ *Неизвестное событие:* \`${escapedEvent}\` Статус: \`${escapedStatus}\``;
                         break;
                 }
-                sendTelegramMessage(CHAT_ID, message, 'MarkdownV2');
+                sendTelegramMessage(CHAT_ID, message, { parse_mode: 'MarkdownV2' });
             }
         });
     });
@@ -395,7 +386,7 @@ bot.onText(/\/status/, async (msg) => {
 async function sendStatusAndButtons(chatId) {
     pm2.list(async (err, list) => {
         if (err) {
-            await sendTelegramMessage(chatId, `🔴 *Ошибка при получении статуса PM2:* ${escapeMarkdownV2Text(err.message)}`, 'MarkdownV2');
+            await bot.sendMessage(chatId, `🔴 *Ошибка при получении статуса PM2:* ${escapeMarkdownV2Text(err.message)}`, { parse_mode: 'MarkdownV2' });
             console.error('Error listing PM2 processes:', err.message);
             return;
         }
@@ -426,7 +417,7 @@ async function sendStatusAndButtons(chatId) {
             ]
         };
 
-        await sendTelegramMessage(chatId, statusMessage, 'MarkdownV2', { reply_markup: inlineKeyboard });
+        await bot.sendMessage(chatId, statusMessage, { parse_mode: 'MarkdownV2', reply_markup: inlineKeyboard });
     });
 }
 
@@ -443,7 +434,7 @@ bot.on('callback_query', async (query) => {
 
     // Проверка CHAT_ID для всех действий с кнопками
     if (String(chatId) !== String(CHAT_ID)) {
-        await sendTelegramMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
+        await bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
         return;
     }
 
@@ -453,14 +444,14 @@ bot.on('callback_query', async (query) => {
     } else if (data === 'request_status') {
         await sendStatusAndButtons(chatId);
     } else if (data === 'request_restart') {
-        await sendTelegramMessage(chatId, `🔄 Запрос на перезапуск *${escapeMarkdownV2Text(PM2_APP_NAME)}*...`, 'MarkdownV2');
+        await bot.sendMessage(chatId, `🔄 Запрос на перезапуск *${escapeMarkdownV2Text(PM2_APP_NAME)}*...`, { parse_mode: 'MarkdownV2' });
         pm2.restart(PM2_APP_NAME, async (err, apps) => {
             if (err) {
                 console.error(`Error restarting ${PM2_APP_NAME}:`, err.message);
-                await sendTelegramMessage(chatId, `🔴 *Ошибка при перезапуске ${escapeMarkdownV2Text(PM2_APP_NAME)}:* ${escapeMarkdownV2Text(err.message)}`, 'MarkdownV2');
+                await bot.sendMessage(chatId, `🔴 *Ошибка при перезапуске ${escapeMarkdownV2Text(PM2_APP_NAME)}:* ${escapeMarkdownV2Text(err.message)}`, { parse_mode: 'MarkdownV2' });
                 return;
             }
-            await sendTelegramMessage(chatId, `✅ *${escapeMarkdownV2Text(PM2_APP_NAME)}* успешно запрошен на перезапуск\\. Ожидайте уведомления от PM2\\.`, 'MarkdownV2');
+            await bot.sendMessage(chatId, `✅ *${escapeMarkdownV2Text(PM2_APP_NAME)}* успешно запрошен на перезапуск\\. Ожидайте уведомления от PM2\\.`, { parse_mode: 'MarkdownV2' });
         });
     }
 });
