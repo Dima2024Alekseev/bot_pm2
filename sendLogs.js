@@ -4,531 +4,706 @@ const path = require('path');
 const chokidar = require('chokidar');
 const TelegramBot = require('node-telegram-bot-api');
 const pm2 = require('pm2');
-const { getDrives } = require('node-disk-info'); // ИСПРАВЛЕНО: Деструктуризация для получения getDrives
+const { getDrives } = require('node-disk-info');
+const os = require('os');
+const moment = require('moment');
+require('moment-duration-format');
 
-// *** НАСТРОЙТЕ ЭТИ ПЕРЕМЕННЫЕ ***
-const BOT_TOKEN = '8127032296:AAH7Vxg7v5I_6M94oZbidNvtyPEAFQVEPds'; // Ваш токен бота
-const CHAT_ID = '1364079703';     // Ваш Chat ID (может быть числом или строкой)
-const PM2_APP_NAME = 'server-site'; // Имя вашего PM2-приложения
-
-// Пороги для оповещений
-const DISK_SPACE_THRESHOLD_PERCENT = 15; // Процент свободного места, ниже которого отправляется предупреждение
-const CPU_THRESHOLD_PERCENT = 80;       // Процент CPU, выше которого отправляется предупреждение для PM2_APP_NAME
-const MEMORY_THRESHOLD_MB = 500;        // Мегабайты памяти, выше которых отправляется предупреждение для PM2_APP_NAME
-
-const CHECK_INTERVAL_MS = 5 * 60 * 1000; // Интервал проверки (5 минут) для диска, CPU, памяти
-// ******************************
-
-// ПУТИ К ФАЙЛАМ ЛОГОВ PM2 - ВЗЯТЫ ИЗ ВАШЕГО ВЫВОДА `pm2 show`
-const LOG_FILE_OUT = '/root/.pm2/logs/server-site-out.log';
-const LOG_FILE_ERR = '/root/.pm2/logs/server-site-error.log';
-
-// Ключевые слова для поиска критических ошибок и предупреждений (нечувствительны к регистру)
-const CRITICAL_KEYWORDS = ['error', 'fatal', 'critical', 'exception', 'failed', 'timeout', 'denied', 'unauthorized', 'segfault'];
-const WARNING_KEYWORDS = ['warn', 'warning', 'deprecated', 'unstable', 'notice'];
-
-// Инициализация Telegram бота
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
-
-// Функция для отправки сообщений в Telegram
-async function sendTelegramMessage(chatId, text, forceSend = false) {
-    if (!text.trim() && !forceSend) { // Не отправляем пустые сообщения, если не принудительно
-        return;
+// ============== КОНФИГУРАЦИЯ ==============
+const CONFIG = {
+    BOT_TOKEN: '8127032296:AAH7Vxg7v5I_6M94oZbidNvtyPEAFQVEPds',
+    CHAT_ID: '1364079703',
+    PM2_APP_NAME: 'server-site',
+    
+    // Пороги для оповещений
+    THRESHOLDS: {
+        DISK_SPACE_PERCENT: 15,
+        CPU_PERCENT: 80,
+        MEMORY_MB: 500,
+        TEMPERATURE: 70 // Для CPU температуры (если доступно)
+    },
+    
+    // Интервалы проверки (в миллисекундах)
+    INTERVALS: {
+        SYSTEM_CHECK: 5 * 60 * 1000, // 5 минут
+        STATUS_UPDATE: 60 * 60 * 1000 // 1 час
+    },
+    
+    // Пути к логам
+    LOG_PATHS: {
+        OUT: '/root/.pm2/logs/server-site-out.log',
+        ERR: '/root/.pm2/logs/server-site-error.log'
+    },
+    
+    // Ключевые слова для мониторинга логов
+    KEYWORDS: {
+        CRITICAL: ['error', 'fatal', 'critical', 'exception', 'failed', 'timeout', 'denied', 'unauthorized', 'segfault'],
+        WARNING: ['warn', 'warning', 'deprecated', 'unstable', 'notice']
+    },
+    
+    // Смайлы для статусов
+    EMOJIS: {
+        ONLINE: '🟢',
+        OFFLINE: '🔴',
+        RESTART: '🟡',
+        WARNING: '⚠️',
+        CRITICAL: '🚨',
+        INFO: 'ℹ️',
+        DISK: '💾',
+        MEMORY: '🧠',
+        CPU: '⚡',
+        TEMP: '🌡️',
+        NETWORK: '🌐'
     }
-    const MAX_MESSAGE_LENGTH = 4000;
-    let parts = [];
-    let remainingText = text;
+};
 
-    while (remainingText.length > 0) {
-        let part = remainingText.substring(0, MAX_MESSAGE_LENGTH);
-        // Попытка обрезать по последней новой строке, чтобы не ломать логи
-        let lastNewline = part.lastIndexOf('\n');
-        if (lastNewline !== -1 && lastNewline !== part.length - 1 && remainingText.length > MAX_MESSAGE_LENGTH) {
-            part = part.substring(0, lastNewline);
-            remainingText = remainingText.substring(lastNewline + 1);
-        } else {
-            remainingText = remainingText.substring(MAX_MESSAGE_LENGTH);
-        }
-        parts.push(part);
+// ============== ИНИЦИАЛИЗАЦИЯ ==============
+const bot = new TelegramBot(CONFIG.BOT_TOKEN, { polling: true });
+let lastLogPositions = { OUT: 0, ERR: 0 };
+
+// ============== УТИЛИТЫ ==============
+class Logger {
+    static log(message, type = 'INFO') {
+        const timestamp = new Date().toISOString();
+        console.log(`[${timestamp}] [${type}] ${message}`);
     }
+    
+    static error(message) {
+        this.log(message, 'ERROR');
+    }
+    
+    static warn(message) {
+        this.log(message, 'WARN');
+    }
+}
 
-    for (const part of parts) {
+class FormatUtils {
+    static bytesToGB(bytes) {
+        return (bytes / (1024 ** 3)).toFixed(2);
+    }
+    
+    static bytesToMB(bytes) {
+        return (bytes / (1024 ** 2)).toFixed(2);
+    }
+    
+    static formatUptime(ms) {
+        return moment.duration(ms).format("d [дней], h [часов], m [мин]");
+    }
+    
+    static escapeMarkdown(text) {
+        return text.replace(/[_*[\]()~`>#+-=|{}.!]/g, '\\$&');
+    }
+    
+    static formatProcessStatus(status) {
+        const statusMap = {
+            'online': `${CONFIG.EMOJIS.ONLINE} Работает`,
+            'stopped': `${CONFIG.EMOJIS.OFFLINE} Остановлен`,
+            'restarting': `${CONFIG.EMOJIS.RESTART} Перезапускается`,
+            'errored': `${CONFIG.EMOJIS.CRITICAL} Ошибка`,
+            'launching': `${CONFIG.EMOJIS.INFO} Запускается`
+        };
+        return statusMap[status] || status;
+    }
+}
+
+// ============== ОСНОВНЫЕ ФУНКЦИИ ==============
+class TelegramService {
+    static async sendMessage(chatId, text, options = {}) {
+        if (!text.trim() && !options.force) return;
+        
         try {
-            await bot.sendMessage(chatId, `\`\`\`\n${part}\n\`\`\``, { parse_mode: 'MarkdownV2' });
-            console.log('Message part sent to Telegram.');
+            const messageOptions = {
+                parse_mode: 'MarkdownV2',
+                disable_web_page_preview: true,
+                ...options
+            };
+            
+            // Разбиваем длинные сообщения
+            const MAX_LENGTH = 4000;
+            if (text.length > MAX_LENGTH) {
+                const parts = [];
+                let remaining = text;
+                
+                while (remaining.length > 0) {
+                    const part = remaining.substring(0, MAX_LENGTH);
+                    const lastNewline = part.lastIndexOf('\n');
+                    
+                    if (lastNewline > 0 && remaining.length > MAX_LENGTH) {
+                        parts.push(part.substring(0, lastNewline));
+                        remaining = remaining.substring(lastNewline + 1);
+                    } else {
+                        parts.push(part);
+                        remaining = remaining.substring(MAX_LENGTH);
+                    }
+                }
+                
+                for (const part of parts) {
+                    await bot.sendMessage(chatId, part, messageOptions);
+                    await new Promise(resolve => setTimeout(resolve, 300)); // Задержка между сообщениями
+                }
+            } else {
+                await bot.sendMessage(chatId, text, messageOptions);
+            }
         } catch (error) {
-            console.error('Error sending message to Telegram (MarkdownV2 failed):', error.response ? error.response.data : error.message);
-            // Попробуем отправить без MarkdownV2
+            Logger.error(`Ошибка отправки сообщения: ${error.message}`);
+            // Попытка отправить без Markdown
             try {
-                await bot.sendMessage(chatId, part);
-                console.log('Message part sent without MarkdownV2 due to error.');
+                await bot.sendMessage(chatId, FormatUtils.escapeMarkdown(text));
             } catch (fallbackError) {
-                console.error('Fallback send failed:', fallbackError.response ? fallbackError.data : fallbackError.message);
+                Logger.error(`Ошибка при повторной отправке: ${fallbackError.message}`);
             }
         }
     }
+    
+    static async sendFormattedMessage(chatId, title, content, options = {}) {
+        const formattedText = `*${title}*\n\n${content}`;
+        return this.sendMessage(chatId, formattedText, options);
+    }
 }
 
-// --- Функционал отслеживания новых логов в реальном времени и поиска ключевых слов ---
-
-let lastReadOutPosition = 0;
-let lastReadErrPosition = 0;
-
-console.log(`Watching for logs from: ${LOG_FILE_OUT} and ${LOG_FILE_ERR}`);
-
-function checkLogForKeywords(logLine) {
-    const lowerCaseLine = logLine.toLowerCase();
-    for (const keyword of CRITICAL_KEYWORDS) {
-        if (lowerCaseLine.includes(keyword)) {
-            return 'CRITICAL';
-        }
-    }
-    for (const keyword of WARNING_KEYWORDS) {
-        if (lowerCaseLine.includes(keyword)) {
-            return 'WARNING';
-        }
-    }
-    return null; // Нет совпадений
-}
-
-function processLogFile(filePath, lastPositionRef, type) {
-    fs.stat(filePath, (err, stats) => {
-        if (err) {
-            console.error(`Error stat-ing file ${filePath}:`, err.message);
-            return;
-        }
-
-        const currentSize = stats.size;
-        if (currentSize < lastPositionRef.value) {
-            console.log(`Log file ${filePath} was truncated. Reading from start.`);
-            lastPositionRef.value = 0;
-        }
-
-        if (currentSize > lastPositionRef.value) {
-            const stream = fs.createReadStream(filePath, { start: lastPositionRef.value, encoding: 'utf8' });
-            let buffer = '';
-            let unprocessedLines = ''; // Для хранения неполных строк
-
-            stream.on('data', (chunk) => {
-                const lines = (unprocessedLines + chunk).split('\n');
-                unprocessedLines = lines.pop(); // Последняя строка может быть неполной
-
-                for (const line of lines) {
-                    if (line.trim() === '') continue; // Пропускаем пустые строки
-
-                    const alertType = checkLogForKeywords(line);
-                    if (alertType) {
-                        sendTelegramMessage(CHAT_ID, `🚨 ${alertType} (${PM2_APP_NAME})\n\`\`\`\n${line}\n\`\`\``);
-                    } else {
-                        // Отправляем обычные логи только если они новые и не содержат критических слов
-                        // Для запроса логов используется отдельная функция
-                        sendTelegramMessage(CHAT_ID, `[${type.toUpperCase()} - ${PM2_APP_NAME} - NEW]\n${line}`);
-                    }
-                }
-            });
-
-            stream.on('end', () => {
-                // Обработать оставшуюся неполную строку, если она есть
-                if (unprocessedLines.trim() !== '') {
-                    const alertType = checkLogForKeywords(unprocessedLines);
-                    if (alertType) {
-                        sendTelegramMessage(CHAT_ID, `🚨 ${alertType} (${PM2_APP_NAME})\n\`\`\`\n${unprocessedLines}\n\`\`\``);
-                    } else {
-                        sendTelegramMessage(CHAT_ID, `[${type.toUpperCase()} - ${PM2_APP_NAME} - NEW]\n${unprocessedLines}`);
-                    }
-                }
-                lastPositionRef.value = currentSize;
-            });
-
-            stream.on('error', (readErr) => {
-                console.error(`Error reading from file ${filePath}:`, readErr.message);
-            });
-        }
-    });
-}
-
-const lastPositionOut = { value: 0 };
-const lastPositionErr = { value: 0 };
-
-function initializeLogPositions() {
-    [LOG_FILE_OUT, LOG_FILE_ERR].forEach(filePath => {
-        if (fs.existsSync(filePath)) {
-            const stats = fs.statSync(filePath);
-            if (filePath === LOG_FILE_OUT) lastPositionOut.value = stats.size;
-            if (filePath === LOG_FILE_ERR) lastPositionErr.value = stats.size;
-            console.log(`Initial position for ${filePath}: ${stats.size}`);
-        } else {
-            console.warn(`Log file not found: ${filePath}. It will be watched when created.`);
-        }
-    });
-}
-
-initializeLogPositions();
-
-const watcher = chokidar.watch([LOG_FILE_OUT, LOG_FILE_ERR], {
-    persistent: true,
-    ignoreInitial: true,
-    awaitWriteFinish: {
-        stabilityThreshold: 2000,
-        pollInterval: 100
-    }
-});
-
-watcher
-    .on('add', (filePath) => {
-        console.log(`File ${filePath} has been added`);
-        if (filePath === LOG_FILE_OUT) lastPositionOut.value = 0;
-        if (filePath === LOG_FILE_ERR) lastPositionErr.value = 0;
-        processLogFile(filePath, filePath === LOG_FILE_OUT ? lastPositionOut : lastPositionErr, filePath === LOG_FILE_OUT ? 'out' : 'err');
-    })
-    .on('change', (filePath) => {
-        console.log(`File ${filePath} has been changed`);
-        processLogFile(filePath, filePath === LOG_FILE_OUT ? lastPositionOut : lastPositionErr, filePath === LOG_FILE_OUT ? 'out' : 'err');
-    })
-    .on('error', (error) => console.error(`Watcher error: ${error}`));
-
-// --- Функционал обработки команд Telegram ---
-
-function readLastLines(filePath, numLines, callback) {
-    if (!fs.existsSync(filePath)) {
-        return callback(null, `Файл логов не найден: ${filePath}`);
-    }
-
-    fs.readFile(filePath, 'utf8', (err, data) => {
-        if (err) {
-            console.error(`Error reading file ${filePath}:`, err.message);
-            return callback(err);
-        }
-        const lines = data.split('\n').filter(line => line.trim() !== '');
-        const lastLines = lines.slice(-numLines);
-        callback(null, lastLines.join('\n'));
-    });
-}
-
-bot.onText(/\/start/, (msg) => {
-    const chatId = msg.chat.id;
-    if (String(chatId) !== String(CHAT_ID)) {
-        bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
-        return;
-    }
-    bot.sendMessage(chatId, 'Привет! Я бот для логов PM2. Используйте:\n' +
-        '- /logs <количество_строк> для получения последних логов.\n' +
-        '- /status для проверки состояния вашего приложения.\n' +
-        '- /restart_server_site для перезапуска вашего приложения.\n' +
-        '- /stop_server_site для остановки вашего приложения.\n' +
-        '- /start_server_site для запуска вашего приложения.\n' +
-        '- /list_all_apps для получения списка всех приложений PM2.\n' +
-        '- /check_system_health для ручной проверки состояния системы (диск, CPU, память).');
-});
-
-bot.onText(/\/logs(?:@\w+)?(?:\s+(\d+))?/, async (msg, match) => {
-    const chatId = msg.chat.id;
-    if (String(chatId) !== String(CHAT_ID)) {
-        bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
-        return;
-    }
-
-    const linesToFetch = match[1] ? parseInt(match[1], 10) : 20;
-
-    if (isNaN(linesToFetch) || linesToFetch <= 0) {
-        await sendTelegramMessage(chatId, 'Пожалуйста, укажите корректное число строк (например: /logs 50)');
-        return;
-    }
-
-    await sendTelegramMessage(chatId, `Запрашиваю последние ${linesToFetch} строк логов для ${PM2_APP_NAME}...`);
-
-    readLastLines(LOG_FILE_OUT, linesToFetch, async (err, outLogs) => {
-        if (err) {
-            await sendTelegramMessage(chatId, `Ошибка при чтении OUT логов: ${err.message}`);
-            return;
-        }
-        await sendTelegramMessage(chatId, `[OUT - ${PM2_APP_NAME} - ЗАПРОС ${linesToFetch}]\n${outLogs || 'Нет записей в OUT логе.'}`);
-    });
-
-    readLastLines(LOG_FILE_ERR, linesToFetch, async (err, errLogs) => {
-        if (err) {
-            await sendTelegramMessage(chatId, `Ошибка при чтении ERR логов: ${err.message}`);
-            return;
-        }
-        await sendTelegramMessage(chatId, `[ERR - ${PM2_APP_NAME} - ЗАПРОС ${linesToFetch}]\n${errLogs || 'Нет записей в ERR логе.'}`);
-    });
-});
-
-// Добавляем обработчик команды для перезапуска
-bot.onText(/\/restart_server_site/, async (msg) => {
-    const chatId = msg.chat.id;
-    if (String(chatId) !== String(CHAT_ID)) {
-        await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
-        return;
-    }
-
-    await sendTelegramMessage(chatId, `Запрос на перезапуск ${PM2_APP_NAME}...`);
-
-    pm2.restart(PM2_APP_NAME, async (err, apps) => {
-        if (err) {
-            console.error(`Error restarting ${PM2_APP_NAME}:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 Ошибка при перезапуске ${PM2_APP_NAME}: ${err.message}`);
-            return;
-        }
-        await sendTelegramMessage(chatId, `🟢 ${PM2_APP_NAME} успешно запрошен на перезапуск.`);
-        // PM2 также отправит событие 'restart', которое будет перехвачено и отправлено ботом.
-    });
-});
-
-// Добавляем обработчик команды для остановки
-bot.onText(/\/stop_server_site/, async (msg) => {
-    const chatId = msg.chat.id;
-    if (String(chatId) !== String(CHAT_ID)) {
-        await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
-        return;
-    }
-
-    await sendTelegramMessage(chatId, `Запрос на остановку ${PM2_APP_NAME}...`);
-
-    pm2.stop(PM2_APP_NAME, async (err) => {
-        if (err) {
-            console.error(`Error stopping ${PM2_APP_NAME}:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 Ошибка при остановке ${PM2_APP_NAME}: ${err.message}`);
-            return;
-        }
-        await sendTelegramMessage(chatId, `⚫️ ${PM2_APP_NAME} успешно запрошен на остановку.`);
-        // PM2 также отправит событие 'stop', которое будет перехвачено и отправлено ботом.
-    });
-});
-
-// Добавляем обработчик команды для запуска
-bot.onText(/\/start_server_site/, async (msg) => {
-    const chatId = msg.chat.id;
-    if (String(chatId) !== String(CHAT_ID)) {
-        await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
-        return;
-    }
-
-    await sendTelegramMessage(chatId, `Запрос на запуск ${PM2_APP_NAME}...`);
-
-    pm2.start(PM2_APP_NAME, async (err) => {
-        if (err) {
-            console.error(`Error starting ${PM2_APP_NAME}:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 Ошибка при запуске ${PM2_APP_NAME}: ${err.message}`);
-            return;
-        }
-        await sendTelegramMessage(chatId, `🟢 ${PM2_APP_NAME} успешно запрошен на запуск.`);
-        // PM2 также отправит событие 'online', которое будет перехвачено и отправлено ботом.
-    });
-});
-
-// --- Функционал мониторинга состояния PM2 ---
-
-pm2.connect(function (err) {
-    if (err) {
-        console.error('Error connecting to PM2:', err.message);
-        sendTelegramMessage(CHAT_ID, `🔴 Ошибка подключения бота к PM2: ${err.message}`, true);
-        return;
-    }
-
-    console.log('Connected to PM2 daemon.');
-
-    // Слушаем события PM2
-    pm2.launchBus(function (err, bus) {
-        if (err) {
-            console.error('Error launching PM2 bus:', err.message);
-            sendTelegramMessage(CHAT_ID, `🔴 Ошибка прослушивания событий PM2: ${err.message}`, true);
-            return;
-        }
-
-        bus.on('process:event', function (data) {
-            if (data.process.name === PM2_APP_NAME) {
-                let message = `📊 PM2 уведомление для ${PM2_APP_NAME}: \n`;
-                switch (data.event) {
-                    case 'stop':
-                        message += `🔴 ПРИЛОЖЕНИЕ ОСТАНОВЛЕНО! (Status: ${data.process.status})`;
-                        break;
-                    case 'restart':
-                        message += `🟡 ПРИЛОЖЕНИЕ ПЕРЕЗАПУЩЕНО! (Status: ${data.process.status})`;
-                        break;
-                    case 'exit':
-                        message += `💔 ПРИЛОЖЕНИЕ ВЫШЛО ИЗ СТРОЯ! (Status: ${data.process.status})`;
-                        break;
-                    case 'online':
-                        message += `🟢 ПРИЛОЖЕНИЕ ЗАПУЩЕНО И РАБОТАЕТ! (Status: ${data.process.status})`;
-                        break;
-                    default:
-                        message += `ℹ️ Неизвестное событие: ${data.event} (Status: ${data.process.status})`;
-                        break;
-                }
-                sendTelegramMessage(CHAT_ID, message, true); // Принудительно отправляем уведомление
+class LogMonitor {
+    static initialize() {
+        Logger.log('Инициализация мониторинга логов...');
+        
+        // Инициализация позиций логов
+        this.initLogPositions();
+        
+        // Настройка watcher
+        const watcher = chokidar.watch(Object.values(CONFIG.LOG_PATHS), {
+            persistent: true,
+            ignoreInitial: true,
+            awaitWriteFinish: {
+                stabilityThreshold: 2000,
+                pollInterval: 100
             }
         });
-    });
-});
-
-// Обработка команды /status (обновлена для включения проверки порогов)
-bot.onText(/\/status/, async (msg) => {
-    const chatId = msg.chat.id;
-    if (String(chatId) !== String(CHAT_ID)) {
-        bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
-        return;
+        
+        watcher
+            .on('add', filePath => this.handleLogChange(filePath))
+            .on('change', filePath => this.handleLogChange(filePath))
+            .on('error', error => Logger.error(`Ошибка watcher: ${error.message}`));
     }
-
-    pm2.list(async (err, list) => {
-        if (err) {
-            await sendTelegramMessage(chatId, `🔴 Ошибка при получении статуса PM2: ${err.message}`);
-            console.error('Error listing PM2 processes:', err.message);
-            return;
-        }
-
-        const app = list.find(p => p.name === PM2_APP_NAME);
-
-        if (app) {
-            let statusMessage = `📊 Статус ${PM2_APP_NAME}:\n`;
-            statusMessage += `   Статус: ${app.pm2_env.status}\n`;
-            statusMessage += `   Uptime: ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
-            statusMessage += `   Перезапусков: ${app.pm2_env.restart_time}\n`;
-            statusMessage += `   Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
-            statusMessage += `   CPU: ${app.monit.cpu}%\n`;
-
-            // Проверка порогов CPU и памяти
-            if (app.monit.cpu > CPU_THRESHOLD_PERCENT) {
-                statusMessage += `   ⚠️ Внимание: CPU (${app.monit.cpu}%) выше порога ${CPU_THRESHOLD_PERCENT}%\n`;
+    
+    static initLogPositions() {
+        Object.entries(CONFIG.LOG_PATHS).forEach(([type, path]) => {
+            if (fs.existsSync(path)) {
+                lastLogPositions[type] = fs.statSync(path).size;
+                Logger.log(`Инициализирована позиция для ${type} лога: ${lastLogPositions[type]}`);
+            } else {
+                Logger.warn(`Файл лога не найден: ${path}`);
             }
-            if ((app.monit.memory / 1024 / 1024) > MEMORY_THRESHOLD_MB) {
-                statusMessage += `   ⚠️ Внимание: Память (${(app.monit.memory / 1024 / 1024).toFixed(2)} MB) выше порога ${MEMORY_THRESHOLD_MB} MB\n`;
-            }
-
-            await sendTelegramMessage(chatId, statusMessage);
-        } else {
-            await sendTelegramMessage(chatId, `Приложение ${PM2_APP_NAME} не найдено в PM2.`);
+        });
+    }
+    
+    static handleLogChange(filePath) {
+        const logType = filePath === CONFIG.LOG_PATHS.OUT ? 'OUT' : 'ERR';
+        const stats = fs.statSync(filePath);
+        
+        if (stats.size < lastLogPositions[logType]) {
+            Logger.log(`Лог файл ${logType} был обрезан, сбрасываем позицию`);
+            lastLogPositions[logType] = 0;
         }
-    });
-});
+        
+        if (stats.size > lastLogPositions[logType]) {
+            this.processNewLogs(filePath, logType, stats.size);
+        }
+    }
+    
+    static processNewLogs(filePath, logType, newSize) {
+        const stream = fs.createReadStream(filePath, {
+            start: lastLogPositions[logType],
+            encoding: 'utf8'
+        });
+        
+        let buffer = '';
+        
+        stream.on('data', chunk => {
+            buffer += chunk;
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            
+            lines.forEach(line => {
+                if (line.trim()) {
+                    this.analyzeLogLine(line, logType);
+                }
+            });
+        });
+        
+        stream.on('end', () => {
+            if (buffer.trim()) {
+                this.analyzeLogLine(buffer, logType);
+            }
+            lastLogPositions[logType] = newSize;
+        });
+        
+        stream.on('error', error => {
+            Logger.error(`Ошибка чтения лога ${logType}: ${error.message}`);
+        });
+    }
+    
+    static analyzeLogLine(line, logType) {
+        const lowerLine = line.toLowerCase();
+        const isCritical = CONFIG.KEYWORDS.CRITICAL.some(kw => lowerLine.includes(kw));
+        const isWarning = CONFIG.KEYWORDS.WARNING.some(kw => lowerLine.includes(kw));
+        
+        if (isCritical) {
+            this.sendLogAlert(line, 'CRITICAL', logType);
+        } else if (isWarning) {
+            this.sendLogAlert(line, 'WARNING', logType);
+        }
+    }
+    
+    static sendLogAlert(line, severity, logType) {
+        const emoji = severity === 'CRITICAL' ? CONFIG.EMOJIS.CRITICAL : CONFIG.EMOJIS.WARNING;
+        const message = `${emoji} *${severity}* (${CONFIG.PM2_APP_NAME}, ${logType}):\n\`\`\`\n${line}\n\`\`\``;
+        TelegramService.sendMessage(CONFIG.CHAT_ID, message);
+    }
+    
+    static getLogs(logType, linesCount = 20) {
+        return new Promise((resolve, reject) => {
+            const filePath = CONFIG.LOG_PATHS[logType];
+            
+            if (!fs.existsSync(filePath)) {
+                return reject(`Файл лога ${logType} не найден`);
+            }
+            
+            fs.readFile(filePath, 'utf8', (err, data) => {
+                if (err) return reject(err);
+                
+                const lines = data.split('\n')
+                    .filter(line => line.trim())
+                    .slice(-linesCount);
+                
+                resolve(lines.join('\n'));
+            });
+        });
+    }
+}
 
-// --- НОВЫЕ ФУНКЦИИ ---
+class SystemMonitor {
+    static async checkSystemHealth() {
+        Logger.log('Проверка состояния системы...');
+        
+        try {
+            const [diskInfo, pm2Info, systemInfo] = await Promise.all([
+                this.getDiskInfo(),
+                this.getPm2Info(),
+                this.getSystemInfo()
+            ]);
+            
+            let message = '*🛠️ Состояние системы*\n\n';
+            let hasProblems = false;
+            
+            // Диски
+            message += `*${CONFIG.EMOJIS.DISK} Дисковое пространство:*\n`;
+            diskInfo.forEach(disk => {
+                const freePercent = (disk.free / disk.total * 100).toFixed(1);
+                message += `▸ *${disk.mount}*: ${freePercent}% свободно (${FormatUtils.bytesToGB(disk.free)}/${FormatUtils.bytesToGB(disk.total)} GB)\n`;
+                
+                if (freePercent < CONFIG.THRESHOLDS.DISK_SPACE_PERCENT) {
+                    message += `   ${CONFIG.EMOJIS.WARNING} *Мало свободного места!*\n`;
+                    hasProblems = true;
+                }
+            });
+            
+            // PM2 процесс
+            message += `\n*🚀 ${CONFIG.PM2_APP_NAME} статус:*\n`;
+            if (pm2Info) {
+                message += `▸ Состояние: ${FormatUtils.formatProcessStatus(pm2Info.status)}\n`;
+                message += `▸ Uptime: ${FormatUtils.formatUptime(Date.now() - pm2Info.pm_uptime)}\n`;
+                message += `▸ Перезапусков: ${pm2Info.restart_time}\n`;
+                message += `▸ ${CONFIG.EMOJIS.CPU} CPU: ${pm2Info.cpu}%\n`;
+                message += `▸ ${CONFIG.EMOJIS.MEMORY} Память: ${FormatUtils.bytesToMB(pm2Info.memory)} MB\n`;
+                
+                if (pm2Info.cpu > CONFIG.THRESHOLDS.CPU_PERCENT) {
+                    message += `   ${CONFIG.EMOJIS.WARNING} *Высокая нагрузка CPU!*\n`;
+                    hasProblems = true;
+                }
+                
+                if (pm2Info.memory / (1024 ** 2) > CONFIG.THRESHOLDS.MEMORY_MB) {
+                    message += `   ${CONFIG.EMOJIS.WARNING} *Высокое потребление памяти!*\n`;
+                    hasProblems = true;
+                }
+            } else {
+                message += `${CONFIG.EMOJIS.OFFLINE} Процесс не найден\n`;
+                hasProblems = true;
+            }
+            
+            // Системная информация
+            message += `\n*${CONFIG.EMOJIS.INFO} Система:*\n`;
+            message += `▸ ${CONFIG.EMOJIS.CPU} Загрузка CPU: ${systemInfo.cpuLoad}%\n`;
+            message += `▸ ${CONFIG.EMOJIS.MEMORY} Свободно RAM: ${FormatUtils.bytesToMB(systemInfo.freeMem)}/${FormatUtils.bytesToMB(systemInfo.totalMem)} MB\n`;
+            message += `▸ ${CONFIG.EMOJIS.NETWORK} Время работы: ${FormatUtils.formatUptime(systemInfo.uptime * 1000)}\n`;
+            
+            if (systemInfo.temperature && systemInfo.temperature > CONFIG.THRESHOLDS.TEMPERATURE) {
+                message += `   ${CONFIG.EMOJIS.WARNING} *Высокая температура CPU: ${systemInfo.temperature}°C!*\n`;
+                hasProblems = true;
+            }
+            
+            // Отправляем только если есть проблемы или это ручная проверка
+            return { message, hasProblems };
+        } catch (error) {
+            Logger.error(`Ошибка проверки системы: ${error.message}`);
+            return {
+                message: `${CONFIG.EMOJIS.CRITICAL} *Ошибка проверки системы:*\n\n${error.message}`,
+                hasProblems: true
+            };
+        }
+    }
+    
+    static async getDiskInfo() {
+        try {
+            const drives = await getDrives();
+            return drives.map(drive => ({
+                mount: drive.mounted,
+                total: drive.total,
+                free: drive.available,
+                used: drive.used
+            }));
+        } catch (error) {
+            Logger.error(`Ошибка получения информации о дисках: ${error.message}`);
+            throw new Error('Не удалось получить информацию о дисках');
+        }
+    }
+    
+    static async getPm2Info() {
+        return new Promise((resolve, reject) => {
+            pm2.list((err, list) => {
+                if (err) return reject(err);
+                
+                const app = list.find(p => p.name === CONFIG.PM2_APP_NAME);
+                if (!app) return resolve(null);
+                
+                resolve({
+                    status: app.pm2_env.status,
+                    pm_uptime: app.pm2_env.pm_uptime,
+                    restart_time: app.pm2_env.restart_time,
+                    cpu: app.monit.cpu,
+                    memory: app.monit.memory
+                });
+            });
+        });
+    }
+    
+    static async getSystemInfo() {
+        const cpuLoad = os.loadavg()[0] * 100 / os.cpus().length;
+        const freeMem = os.freemem();
+        const totalMem = os.totalmem();
+        const uptime = os.uptime();
+        
+        // Попытка получить температуру CPU (Linux)
+        let temperature = null;
+        try {
+            if (fs.existsSync('/sys/class/thermal/thermal_zone0/temp')) {
+                const tempData = fs.readFileSync('/sys/class/thermal/thermal_zone0/temp', 'utf8');
+                temperature = parseInt(tempData, 10) / 1000;
+            }
+        } catch (error) {
+            Logger.error(`Ошибка чтения температуры CPU: ${error.message}`);
+        }
+        
+        return {
+            cpuLoad: cpuLoad.toFixed(1),
+            freeMem,
+            totalMem,
+            uptime,
+            temperature
+        };
+    }
+}
 
-// 1. Мониторинг места на диске и настраиваемые пороги оповещений (для CPU/памяти)
-async function checkSystemHealth() {
-    console.log('Performing scheduled system health check...');
-    let healthMessage = '🩺 Ежедневная проверка состояния системы:\n';
-    let alertCount = 0;
+class Pm2Manager {
+    static connect() {
+        return new Promise((resolve, reject) => {
+            pm2.connect(err => {
+                if (err) return reject(err);
+                Logger.log('Подключено к PM2');
+                resolve();
+            });
+        });
+    }
+    
+    static setupEventBus() {
+        pm2.launchBus((err, bus) => {
+            if (err) {
+                Logger.error(`Ошибка запуска PM2 bus: ${err.message}`);
+                return;
+            }
+            
+            bus.on('process:event', data => {
+                if (data.process.name === CONFIG.PM2_APP_NAME) {
+                    this.handlePm2Event(data.event, data.process);
+                }
+            });
+        });
+    }
+    
+    static handlePm2Event(event, process) {
+        const eventMessages = {
+            'stop': `${CONFIG.EMOJIS.OFFLINE} *Приложение остановлено!*`,
+            'restart': `${CONFIG.EMOJIS.RESTART} *Приложение перезапущено!*`,
+            'exit': `${CONFIG.EMOJIS.CRITICAL} *Приложение завершилось с ошибкой!*`,
+            'online': `${CONFIG.EMOJIS.ONLINE} *Приложение запущено и работает!*`,
+            'error': `${CONFIG.EMOJIS.CRITICAL} *Ошибка в приложении!*`
+        };
+        
+        const message = eventMessages[event] || `${CONFIG.EMOJIS.INFO} Неизвестное событие: ${event}`;
+        TelegramService.sendFormattedMessage(
+            CONFIG.CHAT_ID,
+            `PM2 Уведомление (${CONFIG.PM2_APP_NAME})`,
+            `${message}\n\nСостояние: ${FormatUtils.formatProcessStatus(process.status)}`
+        );
+    }
+    
+    static async listProcesses() {
+        return new Promise((resolve, reject) => {
+            pm2.list((err, list) => {
+                if (err) return reject(err);
+                resolve(list);
+            });
+        });
+    }
+    
+    static async controlProcess(action) {
+        const actions = {
+            'start': pm2.start,
+            'stop': pm2.stop,
+            'restart': pm2.restart,
+            'delete': pm2.delete
+        };
+        
+        if (!actions[action]) {
+            throw new Error(`Неизвестное действие: ${action}`);
+        }
+        
+        return new Promise((resolve, reject) => {
+            actions[action](CONFIG.PM2_APP_NAME, (err, proc) => {
+                if (err) return reject(err);
+                resolve(proc);
+            });
+        });
+    }
+}
 
-    // Проверка места на диске
+// ============== КОМАНДЫ БОТА ==============
+class BotCommands {
+    static initialize() {
+        // Основные команды
+        bot.onText(/\/start/, this.handleStart);
+        bot.onText(/\/help/, this.handleHelp);
+        bot.onText(/\/status/, this.handleStatus);
+        bot.onText(/\/logs/, this.handleLogs);
+        bot.onText(/\/health/, this.handleHealth);
+        bot.onText(/\/list/, this.handleList);
+        
+        // Управление процессом
+        bot.onText(/\/start_process/, this.handleStartProcess);
+        bot.onText(/\/stop_process/, this.handleStopProcess);
+        bot.onText(/\/restart_process/, this.handleRestartProcess);
+        
+        Logger.log('Команды бота инициализированы');
+    }
+    
+    static handleStart(msg) {
+        const chatId = msg.chat.id;
+        if (String(chatId) !== String(CONFIG.CHAT_ID)) return;
+        
+        const welcomeMessage = `👋 *Привет! Я бот-монитор для ${CONFIG.PM2_APP_NAME}*\n\n` +
+            `Я могу:\n` +
+            `▸ Отправлять логи и уведомления о проблемах\n` +
+            `▸ Показывать статус приложения и системы\n` +
+            `▸ Управлять вашим PM2 процессом\n\n` +
+            `Используйте /help для списка команд`;
+        
+        TelegramService.sendFormattedMessage(chatId, 'Добро пожаловать!', welcomeMessage);
+    }
+    
+    static handleHelp(msg) {
+        const chatId = msg.chat.id;
+        if (String(chatId) !== String(CONFIG.CHAT_ID)) return;
+        
+        const helpMessage = `📋 *Доступные команды:*\n\n` +
+            `*Основные:*\n` +
+            `▸ /status - Текущий статус приложения\n` +
+            `▸ /logs [N] - Последние N строк логов (по умолчанию 20)\n` +
+            `▸ /health - Проверка состояния системы\n` +
+            `▸ /list - Список всех PM2 процессов\n\n` +
+            `*Управление:*\n` +
+            `▸ /start_process - Запустить приложение\n` +
+            `▸ /stop_process - Остановить приложение\n` +
+            `▸ /restart_process - Перезапустить приложение\n\n` +
+            `*Настройки:*\n` +
+            `▸ /thresholds - Показать текущие пороги оповещений\n` +
+            `▸ /set_threshold [тип] [значение] - Изменить порог`;
+        
+        TelegramService.sendFormattedMessage(chatId, 'Помощь', helpMessage);
+    }
+    
+    static async handleStatus(msg) {
+        const chatId = msg.chat.id;
+        if (String(chatId) !== String(CONFIG.CHAT_ID)) return;
+        
+        try {
+            const { message } = await SystemMonitor.checkSystemHealth();
+            TelegramService.sendMessage(chatId, message);
+        } catch (error) {
+            TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.CRITICAL} Ошибка получения статуса: ${error.message}`);
+        }
+    }
+    
+    static async handleLogs(msg, match) {
+        const chatId = msg.chat.id;
+        if (String(chatId) !== String(CONFIG.CHAT_ID)) return;
+        
+        const linesCount = match[1] ? parseInt(match[1]) : 20;
+        
+        if (isNaN(linesCount) {
+            return TelegramService.sendMessage(chatId, 'Пожалуйста, укажите число строк (например: /logs 50)');
+        }
+        
+        try {
+            const [outLogs, errLogs] = await Promise.all([
+                LogMonitor.getLogs('OUT', linesCount),
+                LogMonitor.getLogs('ERR', linesCount)
+            ]);
+            
+            let response = `📜 *Последние ${linesCount} строк логов*\n\n`;
+            response += `*OUT logs:*\n\`\`\`\n${outLogs || 'Нет данных'}\n\`\`\`\n\n`;
+            response += `*ERR logs:*\n\`\`\`\n${errLogs || 'Нет данных'}\n\`\`\``;
+            
+            TelegramService.sendMessage(chatId, response);
+        } catch (error) {
+            TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.CRITICAL} Ошибка получения логов: ${error.message}`);
+        }
+    }
+    
+    static async handleHealth(msg) {
+        const chatId = msg.chat.id;
+        if (String(chatId) !== String(CONFIG.CHAT_ID)) return;
+        
+        try {
+            const { message } = await SystemMonitor.checkSystemHealth();
+            TelegramService.sendMessage(chatId, message);
+        } catch (error) {
+            TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.CRITICAL} Ошибка проверки системы: ${error.message}`);
+        }
+    }
+    
+    static async handleList(msg) {
+        const chatId = msg.chat.id;
+        if (String(chatId) !== String(CONFIG.CHAT_ID)) return;
+        
+        try {
+            const processes = await Pm2Manager.listProcesses();
+            
+            if (processes.length === 0) {
+                return TelegramService.sendMessage(chatId, 'Нет запущенных PM2 процессов');
+            }
+            
+            let message = '📋 *Список PM2 процессов*\n\n';
+            
+            processes.forEach(proc => {
+                const isMainApp = proc.name === CONFIG.PM2_APP_NAME;
+                const prefix = isMainApp ? '⭐ ' : '▸ ';
+                
+                message += `${prefix}*${proc.name}* (ID: ${proc.pm_id})\n`;
+                message += `   Статус: ${FormatUtils.formatProcessStatus(proc.pm2_env.status)}\n`;
+                message += `   CPU: ${proc.monit.cpu}% | Память: ${FormatUtils.bytesToMB(proc.monit.memory)} MB\n`;
+                message += `   Uptime: ${FormatUtils.formatUptime(Date.now() - proc.pm2_env.pm_uptime)}\n`;
+                message += `   Перезапусков: ${proc.pm2_env.restart_time}\n\n`;
+            });
+            
+            TelegramService.sendMessage(chatId, message);
+        } catch (error) {
+            TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.CRITICAL} Ошибка получения списка процессов: ${error.message}`);
+        }
+    }
+    
+    static async handleStartProcess(msg) {
+        const chatId = msg.chat.id;
+        if (String(chatId) !== String(CONFIG.CHAT_ID)) return;
+        
+        try {
+            await TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.INFO} Запускаю процесс...`);
+            await Pm2Manager.controlProcess('start');
+            TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.ONLINE} Процесс успешно запущен`);
+        } catch (error) {
+            TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.CRITICAL} Ошибка запуска: ${error.message}`);
+        }
+    }
+    
+    static async handleStopProcess(msg) {
+        const chatId = msg.chat.id;
+        if (String(chatId) !== String(CONFIG.CHAT_ID)) return;
+        
+        try {
+            await TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.INFO} Останавливаю процесс...`);
+            await Pm2Manager.controlProcess('stop');
+            TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.OFFLINE} Процесс успешно остановлен`);
+        } catch (error) {
+            TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.CRITICAL} Ошибка остановки: ${error.message}`);
+        }
+    }
+    
+    static async handleRestartProcess(msg) {
+        const chatId = msg.chat.id;
+        if (String(chatId) !== String(CONFIG.CHAT_ID)) return;
+        
+        try {
+            await TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.INFO} Перезапускаю процесс...`);
+            await Pm2Manager.controlProcess('restart');
+            TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.RESTART} Процесс успешно перезапущен`);
+        } catch (error) {
+            TelegramService.sendMessage(chatId, `${CONFIG.EMOJIS.CRITICAL} Ошибка перезапуска: ${error.message}`);
+        }
+    }
+}
+
+// ============== ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ ==============
+async function initializeApp() {
     try {
-        const drives = await getDrives(); // ИСПРАВЛЕНО: используем getDrives() напрямую
-        let diskInfo = '';
-        drives.forEach(drive => {
-            const usedPercent = (drive.used / drive.total * 100).toFixed(2);
-            const freePercent = (drive.available / drive.total * 100).toFixed(2);
-            diskInfo += `  Диск ${drive.mounted}:\n`;
-            diskInfo += `    Всего: ${(drive.total / (1024 ** 3)).toFixed(2)} GB\n`;
-            diskInfo += `    Использовано: ${(drive.used / (1024 ** 3)).toFixed(2)} GB (${usedPercent}%)\n`;
-            diskInfo += `    Свободно: ${(drive.available / (1024 ** 3)).toFixed(2)} GB (${freePercent}%)\n`;
-
-            if (freePercent < DISK_SPACE_THRESHOLD_PERCENT) {
-                healthMessage += `🚨 Низкое место на диске ${drive.mounted}: ${freePercent}% свободно (ниже ${DISK_SPACE_THRESHOLD_PERCENT}%)\n`;
-                alertCount++;
+        // Подключаемся к PM2
+        await Pm2Manager.connect();
+        Pm2Manager.setupEventBus();
+        
+        // Инициализируем мониторинг логов
+        LogMonitor.initialize();
+        
+        // Регистрируем команды бота
+        BotCommands.initialize();
+        
+        // Запускаем периодическую проверку системы
+        setInterval(async () => {
+            try {
+                const { message, hasProblems } = await SystemMonitor.checkSystemHealth();
+                if (hasProblems) {
+                    await TelegramService.sendMessage(CONFIG.CHAT_ID, message);
+                }
+            } catch (error) {
+                Logger.error(`Ошибка периодической проверки: ${error.message}`);
             }
-        });
-        healthMessage += `\n💾 Информация о дисках:\n${diskInfo}`;
-    } catch (e) {
-        healthMessage += `🔴 Ошибка при получении информации о дисках: ${e.message}\n`;
-        console.error('Error getting disk info:', e);
-        alertCount++;
+        }, CONFIG.INTERVALS.SYSTEM_CHECK);
+        
+        Logger.log('Бот успешно инициализирован и готов к работе');
+        TelegramService.sendMessage(CONFIG.CHAT_ID, `${CONFIG.EMOJIS.ONLINE} *Бот мониторинга запущен!*\n\nСистема готова к работе`);
+    } catch (error) {
+        Logger.error(`Ошибка инициализации: ${error.message}`);
+        process.exit(1);
     }
-
-    // Проверка CPU и памяти для PM2_APP_NAME
-    pm2.list(async (err, list) => {
-        if (err) {
-            healthMessage += `🔴 Ошибка при получении списка PM2 приложений для проверки: ${err.message}\n`;
-            console.error('Error listing PM2 processes for health check:', err.message);
-            alertCount++;
-            await sendTelegramMessage(CHAT_ID, healthMessage, true); // Отправляем, даже если есть ошибка PM2
-            return;
-        }
-
-        const app = list.find(p => p.name === PM2_APP_NAME);
-        if (app) {
-            healthMessage += `\n📈 Состояние ${PM2_APP_NAME}:\n`;
-            healthMessage += `  CPU: ${app.monit.cpu}%\n`;
-            healthMessage += `  Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
-
-            if (app.monit.cpu > CPU_THRESHOLD_PERCENT) {
-                healthMessage += `🚨 CPU (${app.monit.cpu}%) выше порога ${CPU_THRESHOLD_PERCENT}%\n`;
-                alertCount++;
-            }
-            if ((app.monit.memory / 1024 / 1024) > MEMORY_THRESHOLD_MB) {
-                healthMessage += `🚨 Память (${(app.monit.memory / 1024 / 1024).toFixed(2)} MB) выше порога ${MEMORY_THRESHOLD_MB} MB\n`;
-                alertCount++;
-            }
-        } else {
-            healthMessage += `\nПриложение ${PM2_APP_NAME} не найдено в PM2 для проверки CPU/памяти.\n`;
-        }
-
-        // Отправляем сообщение, только если есть алерты или это ручной запрос
-        if (alertCount > 0) {
-            await sendTelegramMessage(CHAT_ID, healthMessage, true);
-        } else {
-            console.log('System health check passed without alerts.');
-        }
-    });
 }
 
-// Запускаем периодическую проверку состояния системы
-setInterval(checkSystemHealth, CHECK_INTERVAL_MS);
-
-// Команда для ручной проверки состояния системы
-bot.onText(/\/check_system_health/, async (msg) => {
-    const chatId = msg.chat.id;
-    if (String(chatId) !== String(CHAT_ID)) {
-        bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
-        return;
-    }
-    await sendTelegramMessage(chatId, 'Выполняю ручную проверку состояния системы...');
-    await checkSystemHealth(); // Выполняем проверку немедленно
-});
-
-
-// 2. Список всех приложений PM2
-bot.onText(/\/list_all_apps/, async (msg) => {
-    const chatId = msg.chat.id;
-    if (String(chatId) !== String(CHAT_ID)) {
-        bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
-        return;
-    }
-
-    await sendTelegramMessage(chatId, 'Запрашиваю список всех приложений PM2...');
-
-    pm2.list(async (err, list) => {
-        if (err) {
-            await sendTelegramMessage(chatId, `🔴 Ошибка при получении списка приложений PM2: ${err.message}`);
-            console.error('Error listing all PM2 processes:', err.message);
-            return;
-        }
-
-        if (list.length === 0) {
-            await sendTelegramMessage(chatId, 'В PM2 не найдено запущенных приложений.');
-            return;
-        }
-
-        let message = '📋 Список всех приложений PM2:\n\n';
-        list.forEach(app => {
-            message += `*Имя:* ${app.name}\n`;
-            message += `  *ID:* ${app.pm_id}\n`;
-            message += `  *Статус:* ${app.pm2_env.status}\n`;
-            message += `  *Uptime:* ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
-            message += `  *Перезапусков:* ${app.pm2_env.restart_time}\n`;
-            message += `  *Память:* ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
-            message += `  *CPU:* ${app.monit.cpu}%\n`;
-            message += `\n`;
-        });
-
-        await sendTelegramMessage(chatId, message);
-    });
-});
-
-
-console.log('PM2 Log & Status Telegram Bot is running and listening for commands and events...');
+// Запуск приложения
+initializeApp();
 
 // Обработка ошибок бота
-bot.on('polling_error', (error) => {
-    console.error('Polling error:', error.code, error.message);
-    // bot.sendMessage(CHAT_ID, `❗️ Ошибкаpolling: ${error.code} - ${error.message}`); // Можно включить для уведомлений об ошибках самого бота
+bot.on('polling_error', error => {
+    Logger.error(`Ошибка polling: ${error.code} - ${error.message}`);
+});
+
+// Обработка завершения процесса
+process.on('SIGINT', () => {
+    Logger.log('Завершение работы...');
+    pm2.disconnect();
+    bot.stopPolling();
+    process.exit();
 });
