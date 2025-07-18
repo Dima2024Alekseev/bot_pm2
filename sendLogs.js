@@ -4,7 +4,7 @@ const path = require('path');
 const chokidar = require('chokidar');
 const TelegramBot = require('node-telegram-bot-api');
 const pm2 = require('pm2');
-const { getDrives } = require('node-disk-info'); // ИСПРАВЛЕНО ЗДЕСЬ: импортируем getDrives напрямую
+const diskinfo = require('node-disk-info'); // ИСПРАВЛЕНО: Теперь просто diskinfo, как объект
 
 // *** НАСТРОЙТЕ ЭТИ ПЕРЕМЕННЫЕ ***
 const BOT_TOKEN = '8127032296:AAH7Vxg7v5I_6M94oZbidNvtyPEAFQVEPds'; // Ваш токен бота
@@ -412,7 +412,7 @@ async function checkSystemHealth() {
 
     // Проверка места на диске
     try {
-        const drives = await getDrives(); // ИСПРАВЛЕНО ЗДЕСЬ: прямой вызов getDrives()
+        const drives = await diskinfo.getDrives(); // ИСПРАВЛЕНО: используем diskinfo.getDrives()
         let diskInfo = '';
         drives.forEach(drive => {
             const usedPercent = (drive.used / drive.total * 100).toFixed(2);
