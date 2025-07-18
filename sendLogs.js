@@ -31,7 +31,7 @@ const mainKeyboard = {
             [{ text: '🔄 Перезапустить приложение' }],
             [{ text: '⚙️ Настройки мониторинга' }]
         ],
-        resize_keyboard: true // Уменьшает размер кнопок
+        // resize_keyboard: true // Временно отключим, чтобы исключить влияние
     }
 };
 
@@ -42,7 +42,7 @@ const logsKeyboard = {
             [{ text: '📝 50 строк логов' }, { text: '📝 100 строк логов' }],
             [{ text: '🔙 На главную' }]
         ],
-        resize_keyboard: true
+        // resize_keyboard: true // Временно отключим
     }
 };
 
@@ -53,7 +53,7 @@ const settingsKeyboard = {
             [{ text: '🚨 Только критические' }, { text: 'ℹ️ Все уведомления' }],
             [{ text: '🔙 На главную' }]
         ],
-        resize_keyboard: true
+        // resize_keyboard: true // Временно отключим
     }
 };
 
@@ -65,16 +65,27 @@ let botState = {
 
 // --- Вспомогательные функции ---
 
+// Задержка
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Экранирует символы MarkdownV2 для текста, который будет внутри MarkdownV2 сообщения,
 // но не является частью самой разметки.
 const escapeMarkdownV2Text = (str) => {
-    if (typeof str !== 'string') return ''; // Защита от нестроковых значений
+    if (typeof str !== 'string') {
+        console.warn('escapeMarkdownV2Text received non-string:', str);
+        return String(str || ''); // Преобразуем в строку
+    }
+    // Символы, которые нужно экранировать в MarkdownV2
+    // Обратите внимание на порядок, чтобы избежать двойного экранирования.
     return str.replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1');
 };
 
 // Экранирует HTML-спецсимволы для текста, который будет внутри <pre> или <code>
 const escapeHtml = (str) => {
-    if (typeof str !== 'string') return ''; // Защита от нестроковых значений
+    if (typeof str !== 'string') {
+        console.warn('escapeHtml received non-string:', str);
+        return String(str || ''); // Преобразуем в строку
+    }
     return str.replace(/&/g, '&amp;')
                .replace(/</g, '&lt;')
                .replace(/>/g, '&gt;');
@@ -88,7 +99,7 @@ async function sendLongMessage(chatId, text, options = {}) {
 
     // Если forceSend не указан и текст пустой после обрезки пробелов, не отправляем
     if (!options.forceSend && messageText.trim() === '') {
-        console.log('Attempted to send empty message, skipped.');
+        console.log(`[${new Date().toISOString()}] Attempted to send empty message to chat ${chatId}, skipped.`);
         return;
     }
 
@@ -100,8 +111,8 @@ async function sendLongMessage(chatId, text, options = {}) {
         let part = remainingText.substring(0, MAX_MESSAGE_LENGTH);
         let lastNewline = part.lastIndexOf('\n');
 
-        // Пытаемся разбить по новой строке, если часть точно на границе или больше
-        if (lastNewline !== -1 && part.length === MAX_MESSAGE_LENGTH) {
+        // Пытаемся разбить по новой строке, если часть заканчивается у границы и есть еще текст
+        if (lastNewline !== -1 && (part.length === MAX_MESSAGE_LENGTH || remainingText.length > MAX_MESSAGE_LENGTH)) {
             part = part.substring(0, lastNewline);
             remainingText = remainingText.substring(lastNewline + 1);
         } else {
@@ -112,24 +123,35 @@ async function sendLongMessage(chatId, text, options = {}) {
 
     for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
+        if (part.trim() === '' && !options.forceSend) { // Пропускаем пустые части, если это не принудительная отправка
+            console.log(`[${new Date().toISOString()}] Skipping empty part ${i+1}/${parts.length} for chat ${chatId}.`);
+            continue;
+        }
+
         try {
             // Если это последняя часть, передаем reply_markup
             const currentOptions = (i === parts.length - 1) ? { ...options } : { parse_mode: options.parse_mode };
             await bot.sendMessage(chatId, part, currentOptions);
+            await delay(100); // Небольшая задержка между частями
         } catch (error) {
-            console.error('Error sending message part:', error.response ? error.response.data : error.message);
+            const errorDetails = error.response ? JSON.stringify(error.response.data) : error.message;
+            console.error(`[${new Date().toISOString()}] Error sending message part ${i+1}/${parts.length} to chat ${chatId}:`, errorDetails);
+            console.error(`Original message part causing error:\n"${part.substring(0, 200)}..."`); // Логируем начало проблемной части
+
             // Если произошла ошибка парсинга, пробуем отправить как обычный текст
             if (options.parse_mode && error.response && error.response.data && error.response.data.description && error.response.data.description.includes("can't parse entities")) {
-                console.warn('Attempting to send as plain text due to MarkdownV2/HTML parsing error.');
+                console.warn(`[${new Date().toISOString()}] Attempting to send as plain text due to MarkdownV2/HTML parsing error.`);
                 try {
                     const plainTextOptions = (i === parts.length - 1) ? { reply_markup: options.reply_markup } : {};
                     await bot.sendMessage(chatId, part, plainTextOptions);
+                    await delay(100);
                 } catch (fallbackError) {
-                    console.error('Fallback to plain text also failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
+                    const fallbackErrorDetails = fallbackError.response ? JSON.stringify(fallbackError.response.data) : fallbackError.message;
+                    console.error(`[${new Date().toISOString()}] Fallback to plain text also failed for part ${i+1}/${parts.length}:`, fallbackErrorDetails);
                 }
             } else {
                  // Если ошибка не связана с парсингом, просто логируем
-                console.error('Failed to send message part even after retries or with other error types.');
+                console.error(`[${new Date().toISOString()}] Failed to send message part even after retries or with other error types. (Part ${i+1}/${parts.length})`);
             }
         }
     }
@@ -141,7 +163,7 @@ async function sendLongMessage(chatId, text, options = {}) {
 let lastReadOutPosition = 0;
 let lastReadErrPosition = 0;
 
-console.log(`Watching for logs from: ${LOG_FILE_OUT} and ${LOG_FILE_ERR}`);
+console.log(`[${new Date().toISOString()}] Watching for logs from: ${LOG_FILE_OUT} and ${LOG_FILE_ERR}`);
 
 function checkLogForKeywords(logLine) {
     const lowerCaseLine = logLine.toLowerCase();
@@ -157,13 +179,13 @@ function checkLogForKeywords(logLine) {
 function processLogFile(filePath, lastPositionRef, type) {
     fs.stat(filePath, (err, stats) => {
         if (err) {
-            console.error(`Error stat-ing file ${filePath}:`, err.message);
+            console.error(`[${new Date().toISOString()}] Error stat-ing file ${filePath}:`, err.message);
             return;
         }
 
         const currentSize = stats.size;
         if (currentSize < lastPositionRef.value) {
-            console.log(`Log file ${filePath} was truncated. Reading from start.`);
+            console.log(`[${new Date().toISOString()}] Log file ${filePath} was truncated. Reading from start.`);
             lastPositionRef.value = 0;
         }
 
@@ -205,7 +227,7 @@ function processLogFile(filePath, lastPositionRef, type) {
             });
 
             stream.on('error', (readErr) => {
-                console.error(`Error reading from file ${filePath}:`, readErr.message);
+                console.error(`[${new Date().toISOString()}] Error reading from file ${filePath}:`, readErr.message);
             });
         }
     });
@@ -220,9 +242,9 @@ function initializeLogPositions() {
             const stats = fs.statSync(filePath);
             if (filePath === LOG_FILE_OUT) lastPositionOut.value = stats.size;
             if (filePath === LOG_FILE_ERR) lastPositionErr.value = stats.size;
-            console.log(`Initial position for ${filePath}: ${stats.size}`);
+            console.log(`[${new Date().toISOString()}] Initial position for ${filePath}: ${stats.size}`);
         } else {
-            console.warn(`Log file not found: ${filePath}`);
+            console.warn(`[${new Date().toISOString()}] Log file not found: ${filePath}`);
         }
     });
 }
@@ -240,14 +262,16 @@ const watcher = chokidar.watch([LOG_FILE_OUT, LOG_FILE_ERR], {
 
 watcher
     .on('add', (filePath) => {
+        console.log(`[${new Date().toISOString()}] File ${filePath} has been added`);
         if (filePath === LOG_FILE_OUT) lastPositionOut.value = 0;
         if (filePath === LOG_FILE_ERR) lastPositionErr.value = 0;
         processLogFile(filePath, filePath === LOG_FILE_OUT ? lastPositionOut : lastPositionErr, filePath === LOG_FILE_OUT ? 'out' : 'err');
     })
     .on('change', (filePath) => {
+        console.log(`[${new Date().toISOString()}] File ${filePath} has been changed`);
         processLogFile(filePath, filePath === LOG_FILE_OUT ? lastPositionOut : lastPositionErr, filePath === LOG_FILE_OUT ? 'out' : 'err');
     })
-    .on('error', (error) => console.error(`Watcher error: ${error}`));
+    .on('error', (error) => console.error(`[${new Date().toISOString()}] Watcher error: ${error}`));
 
 // --- Обработчики команд и кнопок ---
 
@@ -258,18 +282,19 @@ bot.onText(/\/start/, (msg) => {
         return;
     }
 
-    const welcomeMsg = `👋 *Привет! Я бот для мониторинга приложения* \`${escapeMarkdownV2Text(PM2_APP_NAME)}\`\\.\n\n` +
+    const welcomeMsg = `👋 *Привет! Я бот для мониторинга приложения* \`${escapeMarkdownV2Text(PM2_APP_NAME)}\`\\.\\n\\n` +
                        `Используйте кнопки ниже для управления или введите команду вручную\\.`;
 
     // Отправляем сообщение с MarkdownV2 и главной клавиатурой
     sendLongMessage(chatId, welcomeMsg, {
         parse_mode: 'MarkdownV2',
-        ...mainKeyboard
+        ...mainKeyboard,
+        forceSend: true // Принудительно отправляем, даже если каким-то чудом сообщение покажется пустым
     });
 });
 
 // Обработка текстовых сообщений (кнопок)
-bot.on('message', (msg) => {
+bot.on('message', async (msg) => { // Добавили async
     const chatId = msg.chat.id;
     if (String(chatId) !== String(CHAT_ID)) {
         bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
@@ -279,7 +304,7 @@ bot.on('message', (msg) => {
     const text = msg.text;
 
     // Включаем "печатный" режим, чтобы пользователь видел, что бот что-то делает
-    bot.sendChatAction(chatId, 'typing');
+    await bot.sendChatAction(chatId, 'typing'); // Ожидаем завершения
 
     switch(text) {
         case '📊 Статус приложения':
@@ -288,7 +313,7 @@ bot.on('message', (msg) => {
 
         case '📝 Последние логи (20 строк)':
             fetchLogs(chatId, 20, logsKeyboard); // Передаем logsKeyboard для показа после логов
-            bot.sendMessage(chatId, 'Выберите количество строк логов:', logsKeyboard);
+            sendLongMessage(chatId, 'Выберите количество строк логов:', { ...logsKeyboard, parse_mode: 'MarkdownV2' });
             break;
 
         case '🔄 Перезапустить приложение':
@@ -421,7 +446,7 @@ function checkPm2Status(chatId) {
     pm2.list((err, list) => {
         if (err) {
             sendLongMessage(chatId, `🔴 *Ошибка при получении статуса PM2:* ${escapeMarkdownV2Text(err.message)}\\.`, { parse_mode: 'MarkdownV2', ...mainKeyboard });
-            console.error('Error listing PM2 processes:', err.message);
+            console.error(`[${new Date().toISOString()}] Error listing PM2 processes:`, err.message);
             return;
         }
 
@@ -450,7 +475,7 @@ function restartApplication(chatId) {
 
     pm2.restart(PM2_APP_NAME, (err, apps) => {
         if (err) {
-            console.error(`Error restarting ${PM2_APP_NAME}:`, err.message);
+            console.error(`[${new Date().toISOString()}] Error restarting ${PM2_APP_NAME}:`, err.message);
             sendLongMessage(chatId, `🔴 *Ошибка при перезапуске* \`${escapeMarkdownV2Text(PM2_APP_NAME)}\`\\: ${escapeMarkdownV2Text(err.message)}\\.`, { parse_mode: 'MarkdownV2', ...mainKeyboard });
             return;
         }
@@ -462,17 +487,17 @@ function restartApplication(chatId) {
 
 pm2.connect(function(err) {
     if (err) {
-        console.error('Error connecting to PM2:', err.message);
-        sendLongMessage(CHAT_ID, `🔴 *Ошибка подключения бота к PM2:* ${escapeMarkdownV2Text(err.message)}\\.`, { parse_mode: 'MarkdownV2' });
+        console.error(`[${new Date().toISOString()}] Error connecting to PM2:`, err.message);
+        sendLongMessage(CHAT_ID, `🔴 *Ошибка подключения бота к PM2:* ${escapeMarkdownV2Text(err.message)}\\.`, { parse_mode: 'MarkdownV2', forceSend: true });
         return;
     }
 
-    console.log('Connected to PM2 daemon.');
+    console.log(`[${new Date().toISOString()}] Connected to PM2 daemon.`);
 
     pm2.launchBus(function(err, bus) {
         if (err) {
-            console.error('Error launching PM2 bus:', err.message);
-            sendLongMessage(CHAT_ID, `🔴 *Ошибка прослушивания событий PM2:* ${escapeMarkdownV2Text(err.message)}\\.`, { parse_mode: 'MarkdownV2' });
+            console.error(`[${new Date().toISOString()}] Error launching PM2 bus:`, err.message);
+            sendLongMessage(CHAT_ID, `🔴 *Ошибка прослушивания событий PM2:* ${escapeMarkdownV2Text(err.message)}\\.`, { parse_mode: 'MarkdownV2', forceSend: true });
             return;
         }
 
@@ -505,8 +530,8 @@ pm2.connect(function(err) {
     });
 });
 
-console.log('PM2 Log & Status Telegram Bot is running and listening for commands and events...');
+console.log(`[${new Date().toISOString()}] PM2 Log & Status Telegram Bot is running and listening for commands and events...`);
 
 bot.on('polling_error', (error) => {
-    console.error('Polling error:', error.code, error.message);
+    console.error(`[${new Date().toISOString()}] Polling error:`, error.code, error.message);
 });
