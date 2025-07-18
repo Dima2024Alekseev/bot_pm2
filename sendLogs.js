@@ -265,7 +265,7 @@ bot.onText(/\/restart_server_site/, async (msg) => {
 
 // --- Функционал мониторинга состояния PM2 ---
 
-pm2.connect(function(err) {
+pm2.connect(function (err) {
     if (err) {
         console.error('Error connecting to PM2:', err.message);
         sendTelegramMessage(CHAT_ID, `🔴 Ошибка подключения бота к PM2: ${err.message}`, true);
@@ -275,14 +275,14 @@ pm2.connect(function(err) {
     console.log('Connected to PM2 daemon.');
 
     // Слушаем события PM2
-    pm2.launchBus(function(err, bus) {
+    pm2.launchBus(function (err, bus) {
         if (err) {
             console.error('Error launching PM2 bus:', err.message);
             sendTelegramMessage(CHAT_ID, `🔴 Ошибка прослушивания событий PM2: ${err.message}`, true);
             return;
         }
 
-        bus.on('process:event', function(data) {
+        bus.on('process:event', function (data) {
             if (data.process.name === PM2_APP_NAME) {
                 let message = `📊 PM2 уведомление для ${PM2_APP_NAME}: \n`;
                 switch (data.event) {
