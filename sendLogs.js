@@ -557,7 +557,7 @@ class BotCommands {
         
         const linesCount = match[1] ? parseInt(match[1]) : 20;
         
-        if (isNaN(linesCount) {
+        if (isNaN(linesCount)) {
             return TelegramService.sendMessage(chatId, 'Пожалуйста, укажите число строк (например: /logs 50)');
         }
         
