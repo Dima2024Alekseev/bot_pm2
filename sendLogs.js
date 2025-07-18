@@ -4,17 +4,17 @@ const path = require('path');
 const chokidar = require('chokidar');
 const TelegramBot = require('node-telegram-bot-api');
 const pm2 = require('pm2');
-const diskinfo = require('node-disk-info'); // ИСПРАВЛЕНО: Теперь просто diskinfo, как объект
+const { getDrives } = require('node-disk-info'); // ИСПРАВЛЕНО: Деструктуризация для получения getDrives
 
 // *** НАСТРОЙТЕ ЭТИ ПЕРЕМЕННЫЕ ***
 const BOT_TOKEN = '8127032296:AAH7Vxg7v5I_6M94oZbidNvtyPEAFQVEPds'; // Ваш токен бота
-const CHAT_ID = '1364079703';     // Ваш Chat ID (может быть числом или строкой)
+const CHAT_ID = '1364079703';     // Ваш Chat ID (может быть числом или строкой)
 const PM2_APP_NAME = 'server-site'; // Имя вашего PM2-приложения
 
 // Пороги для оповещений
 const DISK_SPACE_THRESHOLD_PERCENT = 15; // Процент свободного места, ниже которого отправляется предупреждение
-const CPU_THRESHOLD_PERCENT = 80;       // Процент CPU, выше которого отправляется предупреждение для PM2_APP_NAME
-const MEMORY_THRESHOLD_MB = 500;        // Мегабайты памяти, выше которых отправляется предупреждение для PM2_APP_NAME
+const CPU_THRESHOLD_PERCENT = 80;       // Процент CPU, выше которого отправляется предупреждение для PM2_APP_NAME
+const MEMORY_THRESHOLD_MB = 500;        // Мегабайты памяти, выше которых отправляется предупреждение для PM2_APP_NAME
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // Интервал проверки (5 минут) для диска, CPU, памяти
 // ******************************
@@ -381,18 +381,18 @@ bot.onText(/\/status/, async (msg) => {
 
         if (app) {
             let statusMessage = `📊 Статус ${PM2_APP_NAME}:\n`;
-            statusMessage += `   Статус: ${app.pm2_env.status}\n`;
-            statusMessage += `   Uptime: ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
-            statusMessage += `   Перезапусков: ${app.pm2_env.restart_time}\n`;
-            statusMessage += `   Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
-            statusMessage += `   CPU: ${app.monit.cpu}%\n`;
+            statusMessage += `   Статус: ${app.pm2_env.status}\n`;
+            statusMessage += `   Uptime: ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
+            statusMessage += `   Перезапусков: ${app.pm2_env.restart_time}\n`;
+            statusMessage += `   Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
+            statusMessage += `   CPU: ${app.monit.cpu}%\n`;
 
             // Проверка порогов CPU и памяти
             if (app.monit.cpu > CPU_THRESHOLD_PERCENT) {
-                statusMessage += `   ⚠️ Внимание: CPU (${app.monit.cpu}%) выше порога ${CPU_THRESHOLD_PERCENT}%\n`;
+                statusMessage += `   ⚠️ Внимание: CPU (${app.monit.cpu}%) выше порога ${CPU_THRESHOLD_PERCENT}%\n`;
             }
             if ((app.monit.memory / 1024 / 1024) > MEMORY_THRESHOLD_MB) {
-                statusMessage += `   ⚠️ Внимание: Память (${(app.monit.memory / 1024 / 1024).toFixed(2)} MB) выше порога ${MEMORY_THRESHOLD_MB} MB\n`;
+                statusMessage += `   ⚠️ Внимание: Память (${(app.monit.memory / 1024 / 1024).toFixed(2)} MB) выше порога ${MEMORY_THRESHOLD_MB} MB\n`;
             }
 
             await sendTelegramMessage(chatId, statusMessage);
@@ -412,15 +412,15 @@ async function checkSystemHealth() {
 
     // Проверка места на диске
     try {
-        const drives = await diskinfo.getDrives(); // ИСПРАВЛЕНО: используем diskinfo.getDrives()
+        const drives = await getDrives(); // ИСПРАВЛЕНО: используем getDrives() напрямую
         let diskInfo = '';
         drives.forEach(drive => {
             const usedPercent = (drive.used / drive.total * 100).toFixed(2);
             const freePercent = (drive.available / drive.total * 100).toFixed(2);
-            diskInfo += `  Диск ${drive.mounted}:\n`;
-            diskInfo += `    Всего: ${(drive.total / (1024 ** 3)).toFixed(2)} GB\n`;
-            diskInfo += `    Использовано: ${(drive.used / (1024 ** 3)).toFixed(2)} GB (${usedPercent}%)\n`;
-            diskInfo += `    Свободно: ${(drive.available / (1024 ** 3)).toFixed(2)} GB (${freePercent}%)\n`;
+            diskInfo += `  Диск ${drive.mounted}:\n`;
+            diskInfo += `    Всего: ${(drive.total / (1024 ** 3)).toFixed(2)} GB\n`;
+            diskInfo += `    Использовано: ${(drive.used / (1024 ** 3)).toFixed(2)} GB (${usedPercent}%)\n`;
+            diskInfo += `    Свободно: ${(drive.available / (1024 ** 3)).toFixed(2)} GB (${freePercent}%)\n`;
 
             if (freePercent < DISK_SPACE_THRESHOLD_PERCENT) {
                 healthMessage += `🚨 Низкое место на диске ${drive.mounted}: ${freePercent}% свободно (ниже ${DISK_SPACE_THRESHOLD_PERCENT}%)\n`;
@@ -447,8 +447,8 @@ async function checkSystemHealth() {
         const app = list.find(p => p.name === PM2_APP_NAME);
         if (app) {
             healthMessage += `\n📈 Состояние ${PM2_APP_NAME}:\n`;
-            healthMessage += `  CPU: ${app.monit.cpu}%\n`;
-            healthMessage += `  Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
+            healthMessage += `  CPU: ${app.monit.cpu}%\n`;
+            healthMessage += `  Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
 
             if (app.monit.cpu > CPU_THRESHOLD_PERCENT) {
                 healthMessage += `🚨 CPU (${app.monit.cpu}%) выше порога ${CPU_THRESHOLD_PERCENT}%\n`;
@@ -511,12 +511,12 @@ bot.onText(/\/list_all_apps/, async (msg) => {
         let message = '📋 Список всех приложений PM2:\n\n';
         list.forEach(app => {
             message += `*Имя:* ${app.name}\n`;
-            message += `  *ID:* ${app.pm_id}\n`;
-            message += `  *Статус:* ${app.pm2_env.status}\n`;
-            message += `  *Uptime:* ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
-            message += `  *Перезапусков:* ${app.pm2_env.restart_time}\n`;
-            message += `  *Память:* ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
-            message += `  *CPU:* ${app.monit.cpu}%\n`;
+            message += `  *ID:* ${app.pm_id}\n`;
+            message += `  *Статус:* ${app.pm2_env.status}\n`;
+            message += `  *Uptime:* ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
+            message += `  *Перезапусков:* ${app.pm2_env.restart_time}\n`;
+            message += `  *Память:* ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
+            message += `  *CPU:* ${app.monit.cpu}%\n`;
             message += `\n`;
         });
 
