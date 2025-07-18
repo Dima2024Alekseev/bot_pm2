@@ -4,17 +4,17 @@ const path = require('path');
 const chokidar = require('chokidar');
 const TelegramBot = require('node-telegram-bot-api');
 const pm2 = require('pm2');
-const { getDrives } = require('node-disk-info'); // ИСПРАВЛЕНО: Деструктуризация для получения getDrives
+const { getDrives } = require('node-disk-info');
 
 // *** НАСТРОЙТЕ ЭТИ ПЕРЕМЕННЫЕ ***
 const BOT_TOKEN = '8127032296:AAH7Vxg7v5I_6M94oZbidNvtyPEAFQVEPds'; // Ваш токен бота
-const CHAT_ID = '1364079703';     // Ваш Chat ID (может быть числом или строкой)
+const CHAT_ID = '1364079703';     // Ваш Chat ID (может быть числом или строкой)
 const PM2_APP_NAME = 'server-site'; // Имя вашего PM2-приложения
 
 // Пороги для оповещений
 const DISK_SPACE_THRESHOLD_PERCENT = 15; // Процент свободного места, ниже которого отправляется предупреждение
-const CPU_THRESHOLD_PERCENT = 80;       // Процент CPU, выше которого отправляется предупреждение для PM2_APP_NAME
-const MEMORY_THRESHOLD_MB = 500;        // Мегабайты памяти, выше которых отправляется предупреждение для PM2_APP_NAME
+const CPU_THRESHOLD_PERCENT = 80;        // Процент CPU, выше которого отправляется предупреждение для PM2_APP_NAME
+const MEMORY_THRESHOLD_MB = 500;         // Мегабайты памяти, выше которых отправляется предупреждение для PM2_APP_NAME
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // Интервал проверки (5 минут) для диска, CPU, памяти
 // ******************************
@@ -32,7 +32,7 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 // Функция для отправки сообщений в Telegram
 async function sendTelegramMessage(chatId, text, forceSend = false) {
-    if (!text.trim() && !forceSend) { // Не отправляем пустые сообщения, если не принудительно
+    if (!text.trim() && !forceSend) {
         return;
     }
     const MAX_MESSAGE_LENGTH = 4000;
@@ -41,7 +41,6 @@ async function sendTelegramMessage(chatId, text, forceSend = false) {
 
     while (remainingText.length > 0) {
         let part = remainingText.substring(0, MAX_MESSAGE_LENGTH);
-        // Попытка обрезать по последней новой строке, чтобы не ломать логи
         let lastNewline = part.lastIndexOf('\n');
         if (lastNewline !== -1 && lastNewline !== part.length - 1 && remainingText.length > MAX_MESSAGE_LENGTH) {
             part = part.substring(0, lastNewline);
@@ -58,7 +57,6 @@ async function sendTelegramMessage(chatId, text, forceSend = false) {
             console.log('Message part sent to Telegram.');
         } catch (error) {
             console.error('Error sending message to Telegram (MarkdownV2 failed):', error.response ? error.response.data : error.message);
-            // Попробуем отправить без MarkdownV2
             try {
                 await bot.sendMessage(chatId, part);
                 console.log('Message part sent without MarkdownV2 due to error.');
@@ -88,7 +86,7 @@ function checkLogForKeywords(logLine) {
             return 'WARNING';
         }
     }
-    return null; // Нет совпадений
+    return null;
 }
 
 function processLogFile(filePath, lastPositionRef, type) {
@@ -107,28 +105,25 @@ function processLogFile(filePath, lastPositionRef, type) {
         if (currentSize > lastPositionRef.value) {
             const stream = fs.createReadStream(filePath, { start: lastPositionRef.value, encoding: 'utf8' });
             let buffer = '';
-            let unprocessedLines = ''; // Для хранения неполных строк
+            let unprocessedLines = '';
 
             stream.on('data', (chunk) => {
                 const lines = (unprocessedLines + chunk).split('\n');
-                unprocessedLines = lines.pop(); // Последняя строка может быть неполной
+                unprocessedLines = lines.pop();
 
                 for (const line of lines) {
-                    if (line.trim() === '') continue; // Пропускаем пустые строки
+                    if (line.trim() === '') continue;
 
                     const alertType = checkLogForKeywords(line);
                     if (alertType) {
                         sendTelegramMessage(CHAT_ID, `🚨 ${alertType} (${PM2_APP_NAME})\n\`\`\`\n${line}\n\`\`\``);
                     } else {
-                        // Отправляем обычные логи только если они новые и не содержат критических слов
-                        // Для запроса логов используется отдельная функция
                         sendTelegramMessage(CHAT_ID, `[${type.toUpperCase()} - ${PM2_APP_NAME} - NEW]\n${line}`);
                     }
                 }
             });
 
             stream.on('end', () => {
-                // Обработать оставшуюся неполную строку, если она есть
                 if (unprocessedLines.trim() !== '') {
                     const alertType = checkLogForKeywords(unprocessedLines);
                     if (alertType) {
@@ -205,21 +200,77 @@ function readLastLines(filePath, numLines, callback) {
     });
 }
 
+// Modified /start command handler to include buttons
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
     if (String(chatId) !== String(CHAT_ID)) {
         bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
         return;
     }
-    bot.sendMessage(chatId, 'Привет! Я бот для логов PM2. Используйте:\n' +
-        '- /logs <количество_строк> для получения последних логов.\n' +
-        '- /status для проверки состояния вашего приложения.\n' +
-        '- /restart_server_site для перезапуска вашего приложения.\n' +
-        '- /stop_server_site для остановки вашего приложения.\n' +
-        '- /start_server_site для запуска вашего приложения.\n' +
-        '- /list_all_apps для получения списка всех приложений PM2.\n' +
-        '- /check_system_health для ручной проверки состояния системы (диск, CPU, память).');
+    
+    const options = {
+        reply_markup: {
+            keyboard: [
+                [{ text: '📊 Статус приложения' }],
+                [{ text: '📜 Последние логи (20 строк)' }],
+                [{ text: '🔄 Перезапустить приложение' }, { text: '⏹ Остановить приложение' }],
+                [{ text: '▶️ Запустить приложение' }],
+                [{ text: '📋 Список всех приложений' }, { text: '🩺 Проверить систему' }]
+            ],
+            resize_keyboard: true,
+            one_time_keyboard: false
+        }
+    };
+    
+    bot.sendMessage(chatId, 'Привет! Я бот для логов PM2. Выберите действие:', options);
 });
+
+// New handler for text messages (buttons)
+bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    if (String(chatId) !== String(CHAT_ID)) return; // Only process for authorized chat ID
+    
+    const text = msg.text;
+    
+    switch(text) {
+        case '📊 Статус приложения':
+            // Emulate /status command
+            await bot.onText(/\/status/)(msg);
+            break;
+            
+        case '📜 Последние логи (20 строк)':
+            // Emulate /logs 20 command
+            // We need to simulate the 'match' array that bot.onText typically provides
+            await bot.onText(/\/logs(?:@\w+)?(?:\s+(\d+))?/)(msg, [null, '20']);
+            break;
+            
+        case '🔄 Перезапустить приложение':
+            // Emulate /restart_server_site command
+            await bot.onText(/\/restart_server_site/)(msg);
+            break;
+            
+        case '⏹ Остановить приложение':
+            // Emulate /stop_server_site command
+            await bot.onText(/\/stop_server_site/)(msg);
+            break;
+            
+        case '▶️ Запустить приложение':
+            // Emulate /start_server_site command
+            await bot.onText(/\/start_server_site/)(msg);
+            break;
+            
+        case '📋 Список всех приложений':
+            // Emulate /list_all_apps command
+            await bot.onText(/\/list_all_apps/)(msg);
+            break;
+            
+        case '🩺 Проверить систему':
+            // Emulate /check_system_health command
+            await bot.onText(/\/check_system_health/)(msg);
+            break;
+    }
+});
+
 
 bot.onText(/\/logs(?:@\w+)?(?:\s+(\d+))?/, async (msg, match) => {
     const chatId = msg.chat.id;
@@ -271,7 +322,6 @@ bot.onText(/\/restart_server_site/, async (msg) => {
             return;
         }
         await sendTelegramMessage(chatId, `🟢 ${PM2_APP_NAME} успешно запрошен на перезапуск.`);
-        // PM2 также отправит событие 'restart', которое будет перехвачено и отправлено ботом.
     });
 });
 
@@ -292,7 +342,6 @@ bot.onText(/\/stop_server_site/, async (msg) => {
             return;
         }
         await sendTelegramMessage(chatId, `⚫️ ${PM2_APP_NAME} успешно запрошен на остановку.`);
-        // PM2 также отправит событие 'stop', которое будет перехвачено и отправлено ботом.
     });
 });
 
@@ -313,7 +362,6 @@ bot.onText(/\/start_server_site/, async (msg) => {
             return;
         }
         await sendTelegramMessage(chatId, `🟢 ${PM2_APP_NAME} успешно запрошен на запуск.`);
-        // PM2 также отправит событие 'online', которое будет перехвачено и отправлено ботом.
     });
 });
 
@@ -356,7 +404,7 @@ pm2.connect(function (err) {
                         message += `ℹ️ Неизвестное событие: ${data.event} (Status: ${data.process.status})`;
                         break;
                 }
-                sendTelegramMessage(CHAT_ID, message, true); // Принудительно отправляем уведомление
+                sendTelegramMessage(CHAT_ID, message, true);
             }
         });
     });
@@ -381,18 +429,17 @@ bot.onText(/\/status/, async (msg) => {
 
         if (app) {
             let statusMessage = `📊 Статус ${PM2_APP_NAME}:\n`;
-            statusMessage += `   Статус: ${app.pm2_env.status}\n`;
-            statusMessage += `   Uptime: ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
-            statusMessage += `   Перезапусков: ${app.pm2_env.restart_time}\n`;
-            statusMessage += `   Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
-            statusMessage += `   CPU: ${app.monit.cpu}%\n`;
+            statusMessage += `   Статус: ${app.pm2_env.status}\n`;
+            statusMessage += `   Uptime: ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
+            statusMessage += `   Перезапусков: ${app.pm2_env.restart_time}\n`;
+            statusMessage += `   Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
+            statusMessage += `   CPU: ${app.monit.cpu}%\n`;
 
-            // Проверка порогов CPU и памяти
             if (app.monit.cpu > CPU_THRESHOLD_PERCENT) {
-                statusMessage += `   ⚠️ Внимание: CPU (${app.monit.cpu}%) выше порога ${CPU_THRESHOLD_PERCENT}%\n`;
+                statusMessage += `   ⚠️ Внимание: CPU (${app.monit.cpu}%) выше порога ${CPU_THRESHOLD_PERCENT}%\n`;
             }
             if ((app.monit.memory / 1024 / 1024) > MEMORY_THRESHOLD_MB) {
-                statusMessage += `   ⚠️ Внимание: Память (${(app.monit.memory / 1024 / 1024).toFixed(2)} MB) выше порога ${MEMORY_THRESHOLD_MB} MB\n`;
+                statusMessage += `   ⚠️ Внимание: Память (${(app.monit.memory / 1024 / 1024).toFixed(2)} MB) выше порога ${MEMORY_THRESHOLD_MB} MB\n`;
             }
 
             await sendTelegramMessage(chatId, statusMessage);
@@ -412,15 +459,15 @@ async function checkSystemHealth() {
 
     // Проверка места на диске
     try {
-        const drives = await getDrives(); // ИСПРАВЛЕНО: используем getDrives() напрямую
+        const drives = await getDrives();
         let diskInfo = '';
         drives.forEach(drive => {
             const usedPercent = (drive.used / drive.total * 100).toFixed(2);
             const freePercent = (drive.available / drive.total * 100).toFixed(2);
-            diskInfo += `  Диск ${drive.mounted}:\n`;
-            diskInfo += `    Всего: ${(drive.total / (1024 ** 3)).toFixed(2)} GB\n`;
-            diskInfo += `    Использовано: ${(drive.used / (1024 ** 3)).toFixed(2)} GB (${usedPercent}%)\n`;
-            diskInfo += `    Свободно: ${(drive.available / (1024 ** 3)).toFixed(2)} GB (${freePercent}%)\n`;
+            diskInfo += `   Диск ${drive.mounted}:\n`;
+            diskInfo += `     Всего: ${(drive.total / (1024 ** 3)).toFixed(2)} GB\n`;
+            diskInfo += `     Использовано: ${(drive.used / (1024 ** 3)).toFixed(2)} GB (${usedPercent}%)\n`;
+            diskInfo += `     Свободно: ${(drive.available / (1024 ** 3)).toFixed(2)} GB (${freePercent}%)\n`;
 
             if (freePercent < DISK_SPACE_THRESHOLD_PERCENT) {
                 healthMessage += `🚨 Низкое место на диске ${drive.mounted}: ${freePercent}% свободно (ниже ${DISK_SPACE_THRESHOLD_PERCENT}%)\n`;
@@ -440,15 +487,15 @@ async function checkSystemHealth() {
             healthMessage += `🔴 Ошибка при получении списка PM2 приложений для проверки: ${err.message}\n`;
             console.error('Error listing PM2 processes for health check:', err.message);
             alertCount++;
-            await sendTelegramMessage(CHAT_ID, healthMessage, true); // Отправляем, даже если есть ошибка PM2
+            await sendTelegramMessage(CHAT_ID, healthMessage, true);
             return;
         }
 
         const app = list.find(p => p.name === PM2_APP_NAME);
         if (app) {
             healthMessage += `\n📈 Состояние ${PM2_APP_NAME}:\n`;
-            healthMessage += `  CPU: ${app.monit.cpu}%\n`;
-            healthMessage += `  Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
+            healthMessage += `   CPU: ${app.monit.cpu}%\n`;
+            healthMessage += `   Память: ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
 
             if (app.monit.cpu > CPU_THRESHOLD_PERCENT) {
                 healthMessage += `🚨 CPU (${app.monit.cpu}%) выше порога ${CPU_THRESHOLD_PERCENT}%\n`;
@@ -462,7 +509,6 @@ async function checkSystemHealth() {
             healthMessage += `\nПриложение ${PM2_APP_NAME} не найдено в PM2 для проверки CPU/памяти.\n`;
         }
 
-        // Отправляем сообщение, только если есть алерты или это ручной запрос
         if (alertCount > 0) {
             await sendTelegramMessage(CHAT_ID, healthMessage, true);
         } else {
@@ -471,7 +517,6 @@ async function checkSystemHealth() {
     });
 }
 
-// Запускаем периодическую проверку состояния системы
 setInterval(checkSystemHealth, CHECK_INTERVAL_MS);
 
 // Команда для ручной проверки состояния системы
@@ -482,9 +527,8 @@ bot.onText(/\/check_system_health/, async (msg) => {
         return;
     }
     await sendTelegramMessage(chatId, 'Выполняю ручную проверку состояния системы...');
-    await checkSystemHealth(); // Выполняем проверку немедленно
+    await checkSystemHealth();
 });
-
 
 // 2. Список всех приложений PM2
 bot.onText(/\/list_all_apps/, async (msg) => {
@@ -511,12 +555,12 @@ bot.onText(/\/list_all_apps/, async (msg) => {
         let message = '📋 Список всех приложений PM2:\n\n';
         list.forEach(app => {
             message += `*Имя:* ${app.name}\n`;
-            message += `  *ID:* ${app.pm_id}\n`;
-            message += `  *Статус:* ${app.pm2_env.status}\n`;
-            message += `  *Uptime:* ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
-            message += `  *Перезапусков:* ${app.pm2_env.restart_time}\n`;
-            message += `  *Память:* ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
-            message += `  *CPU:* ${app.monit.cpu}%\n`;
+            message += `   *ID:* ${app.pm_id}\n`;
+            message += `   *Статус:* ${app.pm2_env.status}\n`;
+            message += `   *Uptime:* ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
+            message += `   *Перезапусков:* ${app.pm2_env.restart_time}\n`;
+            message += `   *Память:* ${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\n`;
+            message += `   *CPU:* ${app.monit.cpu}%\n`;
             message += `\n`;
         });
 
@@ -524,11 +568,9 @@ bot.onText(/\/list_all_apps/, async (msg) => {
     });
 });
 
-
 console.log('PM2 Log & Status Telegram Bot is running and listening for commands and events...');
 
 // Обработка ошибок бота
 bot.on('polling_error', (error) => {
     console.error('Polling error:', error.code, error.message);
-    // bot.sendMessage(CHAT_ID, `❗️ Ошибкаpolling: ${error.code} - ${error.message}`); // Можно включить для уведомлений об ошибках самого бота
-});  
+});
