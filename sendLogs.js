@@ -346,4 +346,4 @@ console.log('PM2 Log & Status Telegram Bot is running and listening for commands
 bot.on('polling_error', (error) => {
     console.error('Polling error:', error.code, error.message);
     // bot.sendMessage(CHAT_ID, `❗️ Ошибкаpolling: ${error.code} - ${error.message}`); // Можно включить для уведомлений об ошибках самого бота
-}); - нужно добавить кнопки для данного телеграмм бота
+}); 
