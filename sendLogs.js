@@ -68,24 +68,40 @@ let botState = {
 // Экранирует символы MarkdownV2 для текста, который будет внутри MarkdownV2 сообщения,
 // но не является частью самой разметки.
 const escapeMarkdownV2Text = (str) => {
+    if (typeof str !== 'string') return ''; // Защита от нестроковых значений
     return str.replace(/([_*[\]()~`>#+\-=|{}.!])/g, '\\$1');
+};
+
+// Экранирует HTML-спецсимволы для текста, который будет внутри <pre> или <code>
+const escapeHtml = (str) => {
+    if (typeof str !== 'string') return ''; // Защита от нестроковых значений
+    return str.replace(/&/g, '&amp;')
+               .replace(/</g, '&lt;')
+               .replace(/>/g, '&gt;');
 };
 
 // Функция для отправки сообщений, разделяющая их на части
 // Принимает parseMode как параметр (или undefined для обычного текста)
 async function sendLongMessage(chatId, text, options = {}) {
-    if (!text.trim() && !options.forceSend) return; // forceSend для отправки пустого текста, если это нужно
+    // Если текст undefined, null или не строка, превращаем в пустую строку
+    const messageText = typeof text === 'string' ? text : String(text || '');
+
+    // Если forceSend не указан и текст пустой после обрезки пробелов, не отправляем
+    if (!options.forceSend && messageText.trim() === '') {
+        console.log('Attempted to send empty message, skipped.');
+        return;
+    }
 
     const MAX_MESSAGE_LENGTH = 4096; // Максимальная длина сообщения Telegram (4096 для Markdown/HTML, 4000 для Text)
     let parts = [];
-    let remainingText = text;
+    let remainingText = messageText;
 
     while (remainingText.length > 0) {
         let part = remainingText.substring(0, MAX_MESSAGE_LENGTH);
         let lastNewline = part.lastIndexOf('\n');
 
         // Пытаемся разбить по новой строке, если часть точно на границе или больше
-        if (lastNewline !== -1 && remainingText.length > MAX_MESSAGE_LENGTH) {
+        if (lastNewline !== -1 && part.length === MAX_MESSAGE_LENGTH) {
             part = part.substring(0, lastNewline);
             remainingText = remainingText.substring(lastNewline + 1);
         } else {
@@ -94,24 +110,25 @@ async function sendLongMessage(chatId, text, options = {}) {
         parts.push(part);
     }
 
-    for (const part of parts) {
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
         try {
             // Если это последняя часть, передаем reply_markup
-            const currentOptions = (parts.indexOf(part) === parts.length - 1) ? { ...options } : { parse_mode: options.parse_mode };
+            const currentOptions = (i === parts.length - 1) ? { ...options } : { parse_mode: options.parse_mode };
             await bot.sendMessage(chatId, part, currentOptions);
         } catch (error) {
             console.error('Error sending message part:', error.response ? error.response.data : error.message);
             // Если произошла ошибка парсинга, пробуем отправить как обычный текст
-            if (options.parse_mode && error.response && error.response.data && error.response.data.description.includes("can't parse entities")) {
-                console.warn('Attempting to send as plain text due to MarkdownV2 parsing error.');
+            if (options.parse_mode && error.response && error.response.data && error.response.data.description && error.response.data.description.includes("can't parse entities")) {
+                console.warn('Attempting to send as plain text due to MarkdownV2/HTML parsing error.');
                 try {
-                    const plainTextOptions = (parts.indexOf(part) === parts.length - 1) ? { reply_markup: options.reply_markup } : {};
+                    const plainTextOptions = (i === parts.length - 1) ? { reply_markup: options.reply_markup } : {};
                     await bot.sendMessage(chatId, part, plainTextOptions);
                 } catch (fallbackError) {
                     console.error('Fallback to plain text also failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
                 }
             } else {
-                 // Если ошибка не связана с парсингом Markdown, просто логируем
+                 // Если ошибка не связана с парсингом, просто логируем
                 console.error('Failed to send message part even after retries or with other error types.');
             }
         }
@@ -167,8 +184,8 @@ function processLogFile(filePath, lastPositionRef, type) {
                         if (alertType && (botState.notificationLevel === 'all' || alertType === 'CRITICAL')) {
                             // Заголовок с MarkdownV2
                             sendLongMessage(CHAT_ID, `${alertType === 'CRITICAL' ? '🚨' : '⚠️'} *${escapeMarkdownV2Text(alertType)} ALERT* (${escapeMarkdownV2Text(PM2_APP_NAME)}):`, { parse_mode: 'MarkdownV2' });
-                            // Сам лог в HTML <pre>
-                            sendLongMessage(CHAT_ID, `<pre>${line}</pre>`, { parse_mode: 'HTML' });
+                            // Сам лог в HTML <pre>, содержимое экранируем HTML
+                            sendLongMessage(CHAT_ID, `<pre>${escapeHtml(line)}</pre>`, { parse_mode: 'HTML' });
                         }
                     }
                 }
@@ -180,7 +197,7 @@ function processLogFile(filePath, lastPositionRef, type) {
                         const alertType = checkLogForKeywords(unprocessedLines);
                         if (alertType && (botState.notificationLevel === 'all' || alertType === 'CRITICAL')) {
                             sendLongMessage(CHAT_ID, `${alertType === 'CRITICAL' ? '🚨' : '⚠️'} *${escapeMarkdownV2Text(alertType)} ALERT* (${escapeMarkdownV2Text(PM2_APP_NAME)}):`, { parse_mode: 'MarkdownV2' });
-                            sendLongMessage(CHAT_ID, `<pre>${unprocessedLines}</pre>`, { parse_mode: 'HTML' });
+                            sendLongMessage(CHAT_ID, `<pre>${escapeHtml(unprocessedLines)}</pre>`, { parse_mode: 'HTML' });
                         }
                     }
                 }
@@ -372,7 +389,7 @@ function fetchLogs(chatId, linesToFetch, keyboardToSendAfterLogs = null) {
         // Заголовок OUT лога
         await sendLongMessage(chatId, `📋 *OUT лог \\(${escapeMarkdownV2Text(PM2_APP_NAME)} \\- последние ${linesToFetch} строк\\):*`, { parse_mode: 'MarkdownV2' });
         // Сам лог в HTML <pre>
-        await sendLongMessage(chatId, `<pre>${outLogs || 'Нет записей в OUT логе\\.'}</pre>`, { parse_mode: 'HTML' });
+        await sendLongMessage(chatId, `<pre>${escapeHtml(outLogs || 'Нет записей в OUT логе\\.')}</pre>`, { parse_mode: 'HTML' });
     });
 
     readLastLines(LOG_FILE_ERR, linesToFetch, async (err, errLogs) => {
@@ -383,7 +400,7 @@ function fetchLogs(chatId, linesToFetch, keyboardToSendAfterLogs = null) {
         // Заголовок ERR лога
         await sendLongMessage(chatId, `🔥 *ERR лог \\(${escapeMarkdownV2Text(PM2_APP_NAME)} \\- последние ${linesToFetch} строк\\):*`, { parse_mode: 'MarkdownV2' });
         // Сам лог в HTML <pre> и с опциональной клавиатурой
-        await sendLongMessage(chatId, `<pre>${errLogs || 'Нет записей в ERR логе\\.'}</pre>`, { parse_mode: 'HTML', ...(keyboardToSendAfterLogs || mainKeyboard) });
+        await sendLongMessage(chatId, `<pre>${escapeHtml(errLogs || 'Нет записей в ERR логе\\.')}</pre>`, { parse_mode: 'HTML', ...(keyboardToSendAfterLogs || mainKeyboard) });
     });
 }
 
