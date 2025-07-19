@@ -9,7 +9,7 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 const userStates = {};
 
 // --- Функции для отправки сообщений с Markdown и опциями ---
-async function sendTelegramMessage(chatId, text, parseMode = 'MarkdownV2', forceSend = false, options = {}) {
+async function sendTelegramMessage(chatId, text, forceSend = false, options = {}) {
     // Не отправляем пустые сообщения, если это не принудительная отправка
     if (!text.trim() && !forceSend) {
         return;
@@ -24,8 +24,7 @@ async function sendTelegramMessage(chatId, text, parseMode = 'MarkdownV2', force
         let part = remainingText.substring(0, MAX_MESSAGE_LENGTH);
         let lastNewline = part.lastIndexOf('\n');
         // Если сообщение длиннее MAX_MESSAGE_LENGTH и есть символ новой строки, обрезаем по нему
-        // Также убедимся, что part не становится пустой строкой после обрезки
-        if (lastNewline !== -1 && lastNewline !== part.length - 1 && remainingText.length > MAX_MESSAGE_LENGTH && lastNewline > 0) {
+        if (lastNewline !== -1 && lastNewline !== part.length - 1 && remainingText.length > MAX_MESSAGE_LENGTH) {
             part = part.substring(0, lastNewline);
             remainingText = remainingText.substring(lastNewline + 1);
         } else {
@@ -38,25 +37,15 @@ async function sendTelegramMessage(chatId, text, parseMode = 'MarkdownV2', force
     for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
         try {
-            // Применяем parse_mode только если он указан
-            const currentOptions = { ...options };
-            if (parseMode) {
-                currentOptions.parse_mode = parseMode;
-            }
-            
-            // Если текст должен быть в кодеблоке, добавляем его
-            let formattedPart = part;
-            if (parseMode === 'MarkdownV2' && (text.startsWith('```') || text.includes('`'))) { // Простая проверка на наличие кодблоков
-                 formattedPart = '```\n' + part + '\n```';
-            }
-
-            await bot.sendMessage(chatId, formattedPart, currentOptions);
+            // Применяем MarkdownV2 для форматирования кода, если это первая часть, добавляем переданные опции
+            const currentOptions = i === 0 ? { parse_mode: 'MarkdownV2', ...options } : { parse_mode: 'MarkdownV2' };
+            await bot.sendMessage(chatId, `\`\`\`\n${part}\n\`\`\``, currentOptions);
             console.log('Message part sent to Telegram.');
         } catch (error) {
-            // Если произошла ошибка, попробуем отправить без MarkdownV2
-            console.error('Error sending message to Telegram:', error.response ? error.response.data : error.message);
+            // Если MarkdownV2 вызывает ошибку, пробуем отправить без него
+            console.error('Error sending message to Telegram (MarkdownV2 failed):', error.response ? error.response.data : error.message);
             try {
-                const currentOptions = { ...options }; // Очищаем parse_mode
+                const currentOptions = i === 0 ? options : {}; // Передаем опции только для первой части
                 await bot.sendMessage(chatId, part, currentOptions);
                 console.log('Message part sent without MarkdownV2 due to error.');
             } catch (fallbackError) {
@@ -66,7 +55,6 @@ async function sendTelegramMessage(chatId, text, parseMode = 'MarkdownV2', force
         }
     }
 }
-
 
 // --- Функции для отправки сообщений с определенной клавиатурой ---
 // Эта функция отправляет сообщение и прикрепляет к нему кастомную клавиатуру.
@@ -79,7 +67,7 @@ async function sendMessageWithKeyboard(chatId, text, keyboard, options = {}) {
     } catch (error) {
         console.error('Error sending message with keyboard:', error.response ? error.response.data : error.message);
         // В случае ошибки при отправке клавиатуры, отправляем только текст
-        await sendTelegramMessage(chatId, text, 'MarkdownV2', false, options); // Использование parseMode по умолчанию
+        await sendTelegramMessage(chatId, text, false, options);
     }
 }
 
@@ -122,18 +110,6 @@ const monitoringKeyboard = {
     }
 };
 
-// Новая клавиатура для подтверждения
-const confirmationKeyboard = {
-    reply_markup: {
-        keyboard: [
-            [{ text: '✅ Да' }, { text: '❌ Нет' }],
-            [{ text: '⬅️ Назад в Главное меню' }] // Добавляем возможность отменить и вернуться
-        ],
-        ...keyboardOptions
-    }
-};
-
-
 // Экспортируем все необходимые сущности для использования в других модулях
 module.exports = {
     bot,
@@ -142,6 +118,5 @@ module.exports = {
     userStates,
     mainKeyboard,
     managementKeyboard,
-    monitoringKeyboard,
-    confirmationKeyboard // Экспортируем новую клавиатуру
+    monitoringKeyboard
 };
