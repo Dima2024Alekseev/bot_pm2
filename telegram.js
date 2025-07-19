@@ -8,7 +8,7 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 // Хранит текущее меню, в котором находится пользователь { chatId: 'current_menu_state' }
 const userStates = {};
 
-// --- Функции для отправки сообщений с Markdown и опциями ---
+// --- Функции для отправки сообщений без MarkdownV2 по умолчанию ---
 async function sendTelegramMessage(chatId, text, forceSend = false, options = {}) {
     // Не отправляем пустые сообщения, если это не принудительная отправка
     if (!text.trim() && !forceSend) {
@@ -37,36 +37,33 @@ async function sendTelegramMessage(chatId, text, forceSend = false, options = {}
     for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
         try {
-            const currentOptions = i === 0 ? { parse_mode: 'MarkdownV2', ...options } : { parse_mode: 'MarkdownV2' };
-            
-            // Если текст должен быть в ````, то оборачиваем.
-            // Если текст не содержит специальных символов MarkdownV2 и не является логом,
-            // можно попробовать отправить его как обычный текст или без MarkdownV2
-            // Здесь мы оставляем `MarkdownV2` по умолчанию, чтобы обрабатывались жирный текст, курсив и т.д.
-            await bot.sendMessage(chatId, part, currentOptions);
+            // *** ИЗМЕНЕНИЕ ЗДЕСЬ: Убираем parse_mode: 'MarkdownV2' по умолчанию ***
+            // Теперь отправляем как обычный текст, если явно не указано иное в options
+            await bot.sendMessage(chatId, part, options);
             console.log('Message part sent to Telegram.');
         } catch (error) {
-            // Если MarkdownV2 вызывает ошибку, пробуем отправить без него
-            console.error('Error sending message to Telegram (MarkdownV2 failed):', error.response ? error.response.data : error.message);
+            // Поскольку MarkdownV2 больше не используется по умолчанию,
+            // этот fallback блок может быть менее актуален, но оставим его
+            // для отладки других потенциальных ошибок отправки.
+            console.error('Error sending message to Telegram:', error.response ? error.response.data : error.message);
+            // Повторная попытка без опций (на всякий случай)
             try {
-                const currentOptions = i === 0 ? options : {}; // Передаем опции только для первой части
-                await bot.sendMessage(chatId, part, currentOptions);
-                console.log('Message part sent without MarkdownV2 due to error.');
+                await bot.sendMessage(chatId, part, {});
+                console.log('Message part sent with minimal options due to error.');
             } catch (fallbackError) {
-                // Если и это не удалось, логируем окончательную ошибку
-                console.error('Fallback send failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
+                console.error('Final fallback send failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
             }
         }
     }
 }
 
 // --- Функции для отправки сообщений с определенной клавиатурой ---
-// Эта функция отправляет сообщение и прикрепляет к нему кастомную клавиатуру.
 async function sendMessageWithKeyboard(chatId, text, keyboard, options = {}) {
     try {
         await bot.sendMessage(chatId, text, {
-            reply_markup: keyboard.reply_markup, // Важно: reply_markup должен быть вложен в объект опций
-            ...options // Позволяет переопределять или добавлять другие опции, например parse_mode
+            reply_markup: keyboard.reply_markup,
+            // *** ИЗМЕНЕНИЕ ЗДЕСЬ: Убираем parse_mode: 'MarkdownV2' по умолчанию ***
+            ...options // Позволяет переопределять или добавлять другие опции
         });
     } catch (error) {
         console.error('Error sending message with keyboard:', error.response ? error.response.data : error.message);
@@ -115,7 +112,6 @@ const monitoringKeyboard = {
 };
 
 // --- Новые инлайн-клавиатуры для подтверждения ---
-// callback_data включает chatId, чтобы предотвратить действия от старых или пересланных кнопок
 const confirmRestartKeyboard = (chatId) => ({
     reply_markup: {
         inline_keyboard: [
@@ -134,7 +130,6 @@ const confirmStopKeyboard = (chatId) => ({
     }
 });
 
-
 // Экспортируем все необходимые сущности для использования в других модулях
 module.exports = {
     bot,
@@ -144,6 +139,6 @@ module.exports = {
     mainKeyboard,
     managementKeyboard,
     monitoringKeyboard,
-    confirmRestartKeyboard, // Новая
-    confirmStopKeyboard     // Новая
+    confirmRestartKeyboard,
+    confirmStopKeyboard
 };
