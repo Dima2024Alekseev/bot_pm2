@@ -1,29 +1,23 @@
 const TelegramBot = require('node-telegram-bot-api');
-require('dotenv').config(); // Загружаем переменные окружения из .env
+require('dotenv').config();
 
-// Инициализация Telegram бота с токеном из process.env
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
-// --- Состояние пользователя для навигации по меню ---
-// Хранит текущее меню, в котором находится пользователь { chatId: 'current_menu_state' }
 const userStates = {};
 
 // --- Функции для отправки сообщений без MarkdownV2 по умолчанию ---
 async function sendTelegramMessage(chatId, text, forceSend = false, options = {}) {
-    // Не отправляем пустые сообщения, если это не принудительная отправка
     if (!text.trim() && !forceSend) {
         return;
     }
 
-    const MAX_MESSAGE_LENGTH = 4000; // Максимальная длина сообщения в Telegram
+    const MAX_MESSAGE_LENGTH = 4000;
     let parts = [];
     let remainingText = text;
 
-    // Разделяем длинные сообщения на части
     while (remainingText.length > 0) {
         let part = remainingText.substring(0, MAX_MESSAGE_LENGTH);
         let lastNewline = part.lastIndexOf('\n');
-        // Если сообщение длиннее MAX_MESSAGE_LENGTH и есть символ новой строки, обрезаем по нему
         if (lastNewline !== -1 && lastNewline !== part.length - 1 && remainingText.length > MAX_MESSAGE_LENGTH) {
             part = part.substring(0, lastNewline);
             remainingText = remainingText.substring(lastNewline + 1);
@@ -33,22 +27,19 @@ async function sendTelegramMessage(chatId, text, forceSend = false, options = {}
         parts.push(part);
     }
 
-    // Отправляем каждую часть сообщения
     for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
         try {
-            // *** ИЗМЕНЕНИЕ ЗДЕСЬ: Убираем parse_mode: 'MarkdownV2' по умолчанию ***
-            // Теперь отправляем как обычный текст, если явно не указано иное в options
+            // *** Ключевое ИЗМЕНЕНИЕ: Убираем parse_mode по умолчанию. Будет обычный текст. ***
+            // Если вы хотите иногда использовать MarkdownV2 (например, для логов),
+            // то нужно передавать { parse_mode: 'MarkdownV2' } в опциях при вызове sendTelegramMessage
             await bot.sendMessage(chatId, part, options);
             console.log('Message part sent to Telegram.');
         } catch (error) {
-            // Поскольку MarkdownV2 больше не используется по умолчанию,
-            // этот fallback блок может быть менее актуален, но оставим его
-            // для отладки других потенциальных ошибок отправки.
             console.error('Error sending message to Telegram:', error.response ? error.response.data : error.message);
-            // Повторная попытка без опций (на всякий случай)
+            // Fallback на случай, если даже обычная отправка с ошибками
             try {
-                await bot.sendMessage(chatId, part, {});
+                await bot.sendMessage(chatId, part, {}); // Попытка отправить вообще без опций
                 console.log('Message part sent with minimal options due to error.');
             } catch (fallbackError) {
                 console.error('Final fallback send failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
@@ -62,8 +53,10 @@ async function sendMessageWithKeyboard(chatId, text, keyboard, options = {}) {
     try {
         await bot.sendMessage(chatId, text, {
             reply_markup: keyboard.reply_markup,
-            // *** ИЗМЕНЕНИЕ ЗДЕСЬ: Убираем parse_mode: 'MarkdownV2' по умолчанию ***
-            ...options // Позволяет переопределять или добавлять другие опции
+            // *** Ключевое ИЗМЕНЕНИЕ: Убираем parse_mode: 'MarkdownV2' отсюда тоже. ***
+            // Текст для клавиатурных сообщений теперь будет обычным текстом,
+            // если только не указан `parse_mode` в `options`.
+            ...options
         });
     } catch (error) {
         console.error('Error sending message with keyboard:', error.response ? error.response.data : error.message);
@@ -72,13 +65,11 @@ async function sendMessageWithKeyboard(chatId, text, keyboard, options = {}) {
     }
 }
 
-// --- Общие опции для всех клавиатур ---
 const keyboardOptions = {
-    resize_keyboard: true, // Клавиатура будет автоматически подстраиваться под размер экрана
-    one_time_keyboard: false // Клавиатура будет оставаться после использования
+    resize_keyboard: true,
+    one_time_keyboard: false
 };
 
-// --- Определение основных клавиатур ---
 const mainKeyboard = {
     reply_markup: {
         keyboard: [
@@ -94,7 +85,7 @@ const managementKeyboard = {
         keyboard: [
             [{ text: '🔄 Перезапустить сервер' }],
             [{ text: '⏹️ Остановить сервер' }, { text: '▶️ Запустить сервер' }],
-            [{ text: '⬅️ Назад в Главное меню' }] // Кнопка для возврата
+            [{ text: '⬅️ Назад в Главное меню' }]
         ],
         ...keyboardOptions
     }
@@ -105,7 +96,7 @@ const monitoringKeyboard = {
         keyboard: [
             [{ text: '📈 Статус приложения' }, { text: '📄 Последние 20 логов' }],
             [{ text: '🩺 Проверить систему' }, { text: '📋 Список всех приложений' }],
-            [{ text: '⬅️ Назад в Главное меню' }] // Кнопка для возврата
+            [{ text: '⬅️ Назад в Главное меню' }]
         ],
         ...keyboardOptions
     }
@@ -130,7 +121,6 @@ const confirmStopKeyboard = (chatId) => ({
     }
 });
 
-// Экспортируем все необходимые сущности для использования в других модулях
 module.exports = {
     bot,
     sendTelegramMessage,

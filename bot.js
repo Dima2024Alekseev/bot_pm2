@@ -2,11 +2,34 @@
 require('dotenv').config();
 
 // Импорт зависимостей из других модулей
-// Добавлены confirmRestartKeyboard, confirmStopKeyboard
-const { bot, sendTelegramMessage, sendMessageWithKeyboard, userStates, mainKeyboard, managementKeyboard, monitoringKeyboard, confirmRestartKeyboard, confirmStopKeyboard } = require('./telegram');
-const { checkPm2AppStatus, restartPm2App, stopPm2App, startPm2App, listAllPm2Apps, connectAndListenPm2Events } = require('./pm2_monitor');
+// Убедитесь, что все необходимые функции и объекты импортированы из telegram.js
+const { 
+    bot, 
+    sendTelegramMessage, 
+    sendMessageWithKeyboard, 
+    userStates, 
+    mainKeyboard, 
+    managementKeyboard, 
+    monitoringKeyboard, 
+    confirmRestartKeyboard, // Импортировано для использования
+    confirmStopKeyboard     // Импортировано для использования
+} = require('./telegram');
+
+const { 
+    checkPm2AppStatus, 
+    restartPm2App, 
+    stopPm2App, 
+    startPm2App, 
+    listAllPm2Apps, 
+    connectAndListenPm2Events 
+} = require('./pm2_monitor');
+
 const { checkSystemHealth } = require('./system_health');
-const { startLogWatcher, readLastLines } = require('./log_watcher');
+
+const { 
+    startLogWatcher, 
+    readLastLines 
+} = require('./log_watcher');
 
 // Получаем переменные окружения напрямую из process.env
 const CHAT_ID = process.env.CHAT_ID;
@@ -48,11 +71,13 @@ bot.onText(/📊 Мониторинг/, async (msg) => {
 bot.onText(/❓ Помощь/, async (msg) => {
     const chatId = msg.chat.id;
     if (String(chatId) !== String(CHAT_ID)) return;
+    // В этом сообщении используем MarkdownV2, чтобы выделить текст,
+    // поскольку это информационное сообщение и его форматирование полезно
     await sendTelegramMessage(chatId, 'Привет! Я бот для логов PM2. Используйте кнопки для взаимодействия. Вот что я могу:\n' +
         '- *Управление*: Перезапуск, остановка, запуск вашего приложения.\n' +
         '- *Мониторинг*: Проверка статуса, логов, состояния системы и списка всех PM2 приложений.\n' +
         '- *Помощь*: Получить это сообщение.\n\n' +
-        'Чтобы вернуться в главное меню, нажмите "⬅️ Назад в Главное меню".');
+        'Чтобы вернуться в главное меню, нажмите "⬅️ Назад в Главное меню".', { parse_mode: 'MarkdownV2' }); // Явно указываем MarkdownV2
 });
 
 // Кнопка "Назад" для возврата в главное меню
@@ -88,14 +113,15 @@ bot.onText(/📄 Последние (\d+) логов|📄 Последние 20 
     }
 
     // Добавлена forceSend=true для отправки даже пустого текста, если логи пусты
-    await sendTelegramMessage(chatId, `Запрашиваю последние ${linesToFetch} строк логов для *${PM2_APP_NAME}*...`, true);
+    await sendTelegramMessage(chatId, `Запрашиваю последние ${linesToFetch} строк логов для ${PM2_APP_NAME}...`, true); // Убрал *
 
     readLastLines(LOG_FILE_OUT, linesToFetch, async (err, outLogs) => {
         if (err) {
             await sendTelegramMessage(chatId, `Ошибка при чтении OUT логов: ${err.message}`, true);
             return;
         }
-        await sendTelegramMessage(chatId, `\`\`\`\n[OUT - ${PM2_APP_NAME} - ЗАПРОС ${linesToFetch}]\n${outLogs || 'Нет записей в OUT логе.'}\n\`\`\``, true);
+        // Здесь используем MarkdownV2 для форматирования логов как блока кода
+        await sendTelegramMessage(chatId, `\`\`\`\n[OUT - ${PM2_APP_NAME} - ЗАПРОС ${linesToFetch}]\n${outLogs || 'Нет записей в OUT логе.'}\n\`\`\``, { parse_mode: 'MarkdownV2' });
     });
 
     readLastLines(LOG_FILE_ERR, linesToFetch, async (err, errLogs) => {
@@ -103,7 +129,8 @@ bot.onText(/📄 Последние (\d+) логов|📄 Последние 20 
             await sendTelegramMessage(chatId, `Ошибка при чтении ERR логов: ${err.message}`, true);
             return;
         }
-        await sendTelegramMessage(chatId, `\`\`\`\n[ERR - ${PM2_APP_NAME} - ЗАПРОС ${linesToFetch}]\n${errLogs || 'Нет записей в ERR логе.'}\n\`\`\``, true);
+        // Здесь используем MarkdownV2 для форматирования логов как блока кода
+        await sendTelegramMessage(chatId, `\`\`\`\n[ERR - ${PM2_APP_NAME} - ЗАПРОС ${linesToFetch}]\n${errLogs || 'Нет записей в ERR логе.'}\n\`\`\``, { parse_mode: 'MarkdownV2' });
     });
 });
 
@@ -136,7 +163,9 @@ bot.onText(/🔄 Перезапустить сервер/, async (msg) => {
         return;
     }
     // Отправляем сообщение с инлайн-клавиатурой для подтверждения
-    await sendMessageWithKeyboard(chatId, `Вы уверены, что хотите перезапустить *${PM2_APP_NAME}*?`, confirmRestartKeyboard(chatId), { parse_mode: 'MarkdownV2' });
+    // УБРАНО: { parse_mode: 'MarkdownV2' } из опций sendMessageWithKeyboard
+    // УБРАНО: * вокруг PM2_APP_NAME для простого текста
+    await sendMessageWithKeyboard(chatId, `Вы уверены, что хотите перезапустить ${PM2_APP_NAME}?`, confirmRestartKeyboard(chatId));
 });
 
 // ИЗМЕНЕНО: Теперь запрашиваем подтверждение
@@ -147,7 +176,9 @@ bot.onText(/⏹️ Остановить сервер/, async (msg) => {
         return;
     }
     // Отправляем сообщение с инлайн-клавиатурой для подтверждения
-    await sendMessageWithKeyboard(chatId, `Вы уверены, что хотите остановить *${PM2_APP_NAME}*?`, confirmStopKeyboard(chatId), { parse_mode: 'MarkdownV2' });
+    // УБРАНО: { parse_mode: 'MarkdownV2' } из опций sendMessageWithKeyboard
+    // УБРАНО: * вокруг PM2_APP_NAME для простого текста
+    await sendMessageWithKeyboard(chatId, `Вы уверены, что хотите остановить ${PM2_APP_NAME}?`, confirmStopKeyboard(chatId));
 });
 
 // Команда "Запустить сервер" не требует подтверждения, как менее критичная
@@ -204,6 +235,7 @@ bot.on('callback_query', async (query) => {
 
 
 // --- Запуск системных проверок и мониторинга логов ---
+// Проверка здоровья системы будет выполняться с заданным интервалом
 setInterval(() => checkSystemHealth(), CHECK_INTERVAL_MS);
 
 // Подключение к PM2 для прослушивания событий
@@ -217,4 +249,6 @@ console.log('PM2 Log & Status Telegram Bot is running and listening for commands
 // Обработка ошибок опроса Telegram API
 bot.on('polling_error', (error) => {
     console.error('Polling error:', error.code, error.message);
+    // Возможно, отправка уведомления администратору в случае серьезной ошибки
+    // sendTelegramMessage(CHAT_ID, `🚨 Критическая ошибка бота: ${error.code} - ${error.message}`, true);
 });
