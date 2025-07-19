@@ -1,5 +1,5 @@
 // system_health.js
-const { getDrives } = require('node-disk-info');
+const NodeDiskInfo = require('node-disk-info'); // Исправленный импорт для node-disk-info
 const pm2 = require('pm2');
 const si = require('systeminformation'); // Импортируем systeminformation
 require('dotenv').config();
@@ -23,7 +23,7 @@ async function checkSystemHealth() {
 
     // --- Проверка места на диске ---
     try {
-        const drives = await getDrives();
+        const drives = await NodeDiskInfo.getDrives(); // Использование getDrives как метода объекта
         let diskInfo = '';
         drives.forEach(drive => {
             const usedPercent = (drive.used / drive.total * 100).toFixed(2);
@@ -33,7 +33,7 @@ async function checkSystemHealth() {
             diskInfo += `     Использовано: \`${(drive.used / (1024 ** 3)).toFixed(2)} GB\` (\`${usedPercent}%\`)\n`;
             diskInfo += `     Свободно: \`${(drive.available / (1024 ** 3)).toFixed(2)} GB\` (\`${freePercent}%\`)\n`;
 
-            if (parseFloat(freePercent) < DISK_SPACE_THRESHOLD_PERCENT) { // Используем parseFloat для сравнения
+            if (parseFloat(freePercent) < DISK_SPACE_THRESHOLD_PERCENT) {
                 healthMessage += `🚨 *Внимание:* Низкое место на диске *${drive.mounted}*: \`${freePercent}%\` свободно (ниже \`${DISK_SPACE_THRESHOLD_PERCENT}%\`)\n`;
                 alertCount++;
             }
@@ -69,7 +69,8 @@ async function checkSystemHealth() {
 
     // --- Время работы системы (uptime) ---
     try {
-        const osUptimeSeconds = si.osInfo().uptime; // uptime из osInfo()
+        const osInfo = await si.osInfo(); // Добавлено await для корректного получения данных
+        const osUptimeSeconds = osInfo.uptime;
         const days = Math.floor(osUptimeSeconds / (3600 * 24));
         const hours = Math.floor((osUptimeSeconds % (3600 * 24)) / 3600);
         const minutes = Math.floor((osUptimeSeconds % 3600) / 60);
@@ -93,13 +94,12 @@ async function checkSystemHealth() {
         healthMessage += `   Ядро: \`${os.kernel}\`\n`;
         healthMessage += `\n💻 *Версии:*\n`;
         healthMessage += `   Node.js: \`${versions.node}\`\n`;
-        healthMessage += `   PM2: \`${versions.pm2}\`\n`; // si.versions() предоставляет версию PM2
+        healthMessage += `   PM2: \`${versions.pm2}\`\n`;
     } catch (e) {
         healthMessage += `🔴 *Ошибка при получении информации об ОС/версиях:* ${e.message}\n`;
         console.error('Error getting OS/versions info:', e);
         alertCount++;
     }
-
 
     // --- Проверка CPU и памяти для конкретного PM2 приложения ---
     pm2.list(async (err, list) => {
@@ -132,10 +132,18 @@ async function checkSystemHealth() {
             healthMessage += `\nПриложение *${PM2_APP_NAME}* не найдено в PM2 для проверки CPU/памяти.\n`;
         }
 
-        // Отправляем сообщение только если были обнаружены проблемы или если это ручной запрос (в checkSystemHealth нет chatId, поэтому отправляем всегда при алерте)
+        // Отправляем сообщение только если были обнаружены проблемы
         if (alertCount > 0) {
             await sendTelegramMessage(CHAT_ID, healthMessage, true);
         } else {
+            // Если нет проблем и это не регулярная проверка, можно ничего не отправлять
+            // Для ручного запроса, вероятно, всегда стоит отправлять сводку, даже если все в порядке
+            // Если checkSystemHealth вызывается по расписанию и нет алертов, можно опустить отправку
+            // Но для команды "Проверить систему" всегда лучше вывести полный отчет.
+            // Учитывая, что checkSystemHealth вызывается также из index.js по команде,
+            // логичнее всегда отправлять healthMessage, независимо от alertCount.
+            // Изменим логику отправки на безусловную, если вы хотите полный отчет по команде.
+            await sendTelegramMessage(CHAT_ID, healthMessage, true);
             console.log('System health check passed without alerts.');
         }
     });
