@@ -9,31 +9,27 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 const userStates = {};
 
 // --- Функции для отправки сообщений с Markdown и опциями ---
-async function sendTelegramMessage(chatId, text, options = {}) {
-    // Не отправляем пустые сообщения
-    if (!text.trim()) {
+async function sendTelegramMessage(chatId, text, parseMode = 'MarkdownV2', forceSend = false, options = {}) {
+    // Не отправляем пустые сообщения, если это не принудительная отправка
+    if (!text.trim() && !forceSend) {
         return;
     }
 
-    const MAX_MESSAGE_LENGTH = 4096; // Максимальная длина сообщения в Telegram (4096 для текста, 4000 для MarkdownV2)
+    const MAX_MESSAGE_LENGTH = 4000; // Максимальная длина сообщения в Telegram
     let parts = [];
     let remainingText = text;
 
     // Разделяем длинные сообщения на части
     while (remainingText.length > 0) {
         let part = remainingText.substring(0, MAX_MESSAGE_LENGTH);
-        // Попытка разбить по последней новой строке, если часть слишком большая
-        // Это более мягкое условие, чем 0.8, чтобы избежать слишком коротких кусков
-        if (remainingText.length > MAX_MESSAGE_LENGTH) {
-            let lastNewline = part.lastIndexOf('\n');
-            if (lastNewline !== -1 && lastNewline > (MAX_MESSAGE_LENGTH * 0.5)) { // Если новая строка находится во второй половине части
-                part = part.substring(0, lastNewline);
-                remainingText = remainingText.substring(lastNewline + 1);
-            } else {
-                remainingText = remainingText.substring(MAX_MESSAGE_LENGTH);
-            }
+        let lastNewline = part.lastIndexOf('\n');
+        // Если сообщение длиннее MAX_MESSAGE_LENGTH и есть символ новой строки, обрезаем по нему
+        // Также убедимся, что part не становится пустой строкой после обрезки
+        if (lastNewline !== -1 && lastNewline !== part.length - 1 && remainingText.length > MAX_MESSAGE_LENGTH && lastNewline > 0) {
+            part = part.substring(0, lastNewline);
+            remainingText = remainingText.substring(lastNewline + 1);
         } else {
-            remainingText = ''; // Вся оставшаяся часть - это последняя
+            remainingText = remainingText.substring(MAX_MESSAGE_LENGTH);
         }
         parts.push(part);
     }
@@ -42,49 +38,55 @@ async function sendTelegramMessage(chatId, text, options = {}) {
     for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
         try {
-            // Применяем parse_mode и другие опции, переданные в функцию.
-            // Если parse_mode не указан, по умолчанию не используем его (plain text).
-            await bot.sendMessage(chatId, part, options);
+            // Применяем parse_mode только если он указан
+            const currentOptions = { ...options };
+            if (parseMode) {
+                currentOptions.parse_mode = parseMode;
+            }
+            
+            // Если текст должен быть в кодеблоке, добавляем его
+            let formattedPart = part;
+            if (parseMode === 'MarkdownV2' && (text.startsWith('```') || text.includes('`'))) { // Простая проверка на наличие кодблоков
+                 formattedPart = '```\n' + part + '\n```';
+            }
+
+            await bot.sendMessage(chatId, formattedPart, currentOptions);
             console.log('Message part sent to Telegram.');
         } catch (error) {
+            // Если произошла ошибка, попробуем отправить без MarkdownV2
             console.error('Error sending message to Telegram:', error.response ? error.response.data : error.message);
-            // Если ошибка связана с парсингом (частая проблема с MarkdownV2), попробуем отправить как plain text
-            if (error.response && error.response.data && error.response.data.description &&
-                (error.response.data.description.includes('Bad Request: can\'t parse entities') ||
-                 error.response.data.description.includes('Bad Request: failed to parse'))) {
-                try {
-                    console.warn('Attempting to send as plain text due to Markdown parsing error.');
-                    await bot.sendMessage(chatId, part); // Отправляем без форматирования
-                } catch (fallbackError) {
-                    console.error('Fallback send as plain text failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
-                }
-            } else {
-                // В случае других ошибок, просто логируем и не ретраим без формата
-                console.error('Non-parsing error, not retrying without format:', error.response ? error.response.data : error.message);
+            try {
+                const currentOptions = { ...options }; // Очищаем parse_mode
+                await bot.sendMessage(chatId, part, currentOptions);
+                console.log('Message part sent without MarkdownV2 due to error.');
+            } catch (fallbackError) {
+                // Если и это не удалось, логируем окончательную ошибку
+                console.error('Fallback send failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
             }
         }
     }
 }
 
+
 // --- Функции для отправки сообщений с определенной клавиатурой ---
+// Эта функция отправляет сообщение и прикрепляет к нему кастомную клавиатуру.
 async function sendMessageWithKeyboard(chatId, text, keyboard, options = {}) {
     try {
         await bot.sendMessage(chatId, text, {
-            reply_markup: keyboard.reply_markup,
-            ...options
+            reply_markup: keyboard.reply_markup, // Важно: reply_markup должен быть вложен в объект опций
+            ...options // Позволяет переопределять или добавлять другие опции, например parse_mode
         });
     } catch (error) {
         console.error('Error sending message with keyboard:', error.response ? error.response.data : error.message);
         // В случае ошибки при отправке клавиатуры, отправляем только текст
-        // Пробуем отправить с исходными опциями, если это был parse_mode
-        await sendTelegramMessage(chatId, text, options); // передаем исходные options, чтобы parse_mode сохранился
+        await sendTelegramMessage(chatId, text, 'MarkdownV2', false, options); // Использование parseMode по умолчанию
     }
 }
 
 // --- Общие опции для всех клавиатур ---
 const keyboardOptions = {
-    resize_keyboard: true,
-    one_time_keyboard: false
+    resize_keyboard: true, // Клавиатура будет автоматически подстраиваться под размер экрана
+    one_time_keyboard: false // Клавиатура будет оставаться после использования
 };
 
 // --- Определение основных клавиатур ---
@@ -103,7 +105,7 @@ const managementKeyboard = {
         keyboard: [
             [{ text: '🔄 Перезапустить сервер' }],
             [{ text: '⏹️ Остановить сервер' }, { text: '▶️ Запустить сервер' }],
-            [{ text: '⬅️ Назад в Главное меню' }]
+            [{ text: '⬅️ Назад в Главное меню' }] // Кнопка для возврата
         ],
         ...keyboardOptions
     }
@@ -114,17 +116,18 @@ const monitoringKeyboard = {
         keyboard: [
             [{ text: '📈 Статус приложения' }, { text: '📄 Последние 20 логов' }],
             [{ text: '🩺 Проверить систему' }, { text: '📋 Список всех приложений' }],
-            [{ text: '⬅️ Назад в Главное меню' }]
+            [{ text: '⬅️ Назад в Главное меню' }] // Кнопка для возврата
         ],
         ...keyboardOptions
     }
 };
 
+// Новая клавиатура для подтверждения
 const confirmationKeyboard = {
     reply_markup: {
         keyboard: [
             [{ text: '✅ Да' }, { text: '❌ Нет' }],
-            [{ text: '⬅️ Назад в Главное меню' }]
+            [{ text: '⬅️ Назад в Главное меню' }] // Добавляем возможность отменить и вернуться
         ],
         ...keyboardOptions
     }
@@ -140,5 +143,5 @@ module.exports = {
     mainKeyboard,
     managementKeyboard,
     monitoringKeyboard,
-    confirmationKeyboard
+    confirmationKeyboard // Экспортируем новую клавиатуру
 };
