@@ -1,27 +1,19 @@
 // system_health.js
-const checkDiskSpace = require('check-disk-space'); // Новая библиотека для проверки дискового пространства
+const checkDiskSpace = require('check-disk-space');
 const pm2 = require('pm2');
 const si = require('systeminformation');
 require('dotenv').config();
 const { sendTelegramMessage } = require('./telegram');
 
-// Получаем необходимые переменные из process.env и парсим числа
 const DISK_SPACE_THRESHOLD_PERCENT = parseInt(process.env.DISK_SPACE_THRESHOLD_PERCENT, 10);
 const CPU_THRESHOLD_PERCENT = parseInt(process.env.CPU_THRESHOLD_PERCENT, 10);
 const MEMORY_THRESHOLD_MB = parseInt(process.env.MEMORY_THRESHOLD_MB, 10);
 const PM2_APP_NAME = process.env.PM2_APP_NAME;
 const CHAT_ID = process.env.CHAT_ID;
 
-// Определяем путь к диску, который нужно проверять.
-// Обычно это корневая директория '/' для Linux, или 'C:' для Windows.
-// Убедитесь, что этот путь актуален для вашего сервера.
 const DISK_PATH_TO_CHECK = process.env.DISK_PATH_TO_CHECK || '/';
 
 
-/**
- * Выполняет проверку состояния системы (диск, CPU, память PM2, общая RAM, uptime, OS info).
- * Отправляет оповещения, если обнаружены проблемы.
- */
 async function checkSystemHealth() {
     console.log('Performing scheduled system health check...');
     let healthMessage = '🩺 *Ежедневная проверка состояния системы:*\n';
@@ -32,8 +24,9 @@ async function checkSystemHealth() {
         const diskSpace = await checkDiskSpace(DISK_PATH_TO_CHECK);
 
         const totalGB = (diskSpace.size / (1024 ** 3)).toFixed(2);
+        // Исправлена лишняя скобка здесь:
+        const usedGB = ((diskSpace.size - diskSpace.free) / (1024 ** 3)).toFixed(2);
         const freeGB = (diskSpace.free / (1024 ** 3)).toFixed(2);
-        const usedGB = (diskSpace.size - diskSpace.free) / (1024 ** 3)).toFixed(2);
         const usedPercent = ((diskSpace.size - diskSpace.free) / diskSpace.size * 100).toFixed(2);
         const freePercent = (diskSpace.free / diskSpace.size * 100).toFixed(2);
 
@@ -64,9 +57,6 @@ async function checkSystemHealth() {
         healthMessage += `   Всего: \`${totalMemGB} GB\`\n`;
         healthMessage += `   Использовано: \`${usedMemGB} GB\` (\`${usedMemPercent}%\`)\n`;
         healthMessage += `   Свободно: \`${freeMemGB} GB\`\n`;
-
-        // Можно добавить порог для общей RAM, если требуется
-        // Например: if (usedMemPercent > SOME_RAM_THRESHOLD_PERCENT) { ... }
 
     } catch (e) {
         healthMessage += `🔴 *Ошибка при получении информации о RAM системы:* ${e.message}\n`;
@@ -143,7 +133,6 @@ async function checkSystemHealth() {
     });
 }
 
-// Экспортируем функцию для использования в index.js
 module.exports = {
     checkSystemHealth
 };
