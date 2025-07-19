@@ -5,14 +5,6 @@ const si = require('systeminformation');
 require('dotenv').config();
 const { sendTelegramMessage } = require('./telegram');
 
-// --- Диагностические логи ---
-console.log(`Type of checkDiskSpace after require: ${typeof checkDiskSpace}`);
-console.log(`Type of si (systeminformation) after require: ${typeof si}`);
-console.log(`Type of si.osInfo: ${typeof si.osInfo}`);
-console.log(`Type of si.mem: ${typeof si.mem}`);
-// --- Конец диагностических логов ---
-
-
 // Получаем необходимые переменные из process.env и парсим числа
 const DISK_SPACE_THRESHOLD_PERCENT = parseInt(process.env.DISK_SPACE_THRESHOLD_PERCENT, 10);
 const CPU_THRESHOLD_PERCENT = parseInt(process.env.CPU_THRESHOLD_PERCENT, 10);
@@ -21,8 +13,6 @@ const PM2_APP_NAME = process.env.PM2_APP_NAME;
 const CHAT_ID = process.env.CHAT_ID;
 
 // Определяем путь к диску, который нужно проверять.
-// Обычно это корневая директория '/' для Linux, или 'C:' для Windows.
-// Убедитесь, что этот путь актуален для вашего сервера.
 const DISK_PATH_TO_CHECK = process.env.DISK_PATH_TO_CHECK || '/';
 
 
@@ -37,31 +27,33 @@ async function checkSystemHealth() {
 
     // --- Проверка места на диске ---
     try {
-        // Убедитесь, что checkDiskSpace действительно является функцией
-        if (typeof checkDiskSpace !== 'function') {
-            throw new Error('checkDiskSpace is not a function. Module might not be loaded correctly.');
-        }
-        const diskSpace = await checkDiskSpace(DISK_PATH_TO_CHECK);
+        // Проверяем, что checkDiskSpace действительно является функцией перед использованием
+        if (typeof checkDiskSpace === 'function') {
+            const diskSpace = await checkDiskSpace(DISK_PATH_TO_CHECK);
 
-        const totalGB = (diskSpace.size / (1024 ** 3)).toFixed(2);
-        const usedGB = ((diskSpace.size - diskSpace.free) / (1024 ** 3)).toFixed(2); // Исправлена лишняя скобка
-        const freeGB = (diskSpace.free / (1024 ** 3)).toFixed(2);
-        const usedPercent = ((diskSpace.size - diskSpace.free) / diskSpace.size * 100).toFixed(2);
-        const freePercent = (diskSpace.free / diskSpace.size * 100).toFixed(2);
+            const totalGB = (diskSpace.size / (1024 ** 3)).toFixed(2);
+            const usedGB = ((diskSpace.size - diskSpace.free) / (1024 ** 3)).toFixed(2);
+            const freeGB = (diskSpace.free / (1024 ** 3)).toFixed(2);
+            const usedPercent = ((diskSpace.size - diskSpace.free) / diskSpace.size * 100).toFixed(2);
+            const freePercent = (diskSpace.free / diskSpace.size * 100).toFixed(2);
 
-        healthMessage += `\n💾 *Информация о диске (${DISK_PATH_TO_CHECK}):*\n`;
-        healthMessage += `   Всего: \`${totalGB} GB\`\n`;
-        healthMessage += `   Использовано: \`${usedGB} GB\` (\`${usedPercent}%\`)\n`;
-        healthMessage += `   Свободно: \`${freeGB} GB\` (\`${freePercent}%\`)\n`;
+            healthMessage += `\n💾 *Информация о диске (${DISK_PATH_TO_CHECK}):*\n`;
+            healthMessage += `   Всего: \`${totalGB} GB\`\n`;
+            healthMessage += `   Использовано: \`${usedGB} GB\` (\`${usedPercent}%\`)\n`;
+            healthMessage += `   Свободно: \`${freeGB} GB\` (\`${freePercent}%\`)\n`;
 
-        if (parseFloat(freePercent) < DISK_SPACE_THRESHOLD_PERCENT) {
-            healthMessage += `🚨 *Внимание:* Низкое место на диске *${DISK_PATH_TO_CHECK}*: \`${freePercent}%\` свободно (ниже \`${DISK_SPACE_THRESHOLD_PERCENT}%\`)\n`;
-            alertCount++;
+            if (parseFloat(freePercent) < DISK_SPACE_THRESHOLD_PERCENT) {
+                healthMessage += `🚨 *Внимание:* Низкое место на диске *${DISK_PATH_TO_CHECK}*: \`${freePercent}%\` свободно (ниже \`${DISK_SPACE_THRESHOLD_PERCENT}%\`)\n`;
+                alertCount++;
+            }
+        } else {
+            // Если checkDiskSpace не функция, просто пропускаем этот блок без вывода ошибки в Telegram
+            console.error('checkDiskSpace is not a function. Disk information will not be displayed.');
         }
     } catch (e) {
-        healthMessage += `🔴 *Ошибка при получении информации о диске:* ${e.message}\n`;
-        console.error('Error getting disk info:', e);
-        alertCount++;
+        // Эта ошибка будет выведена только в консоль сервера, но не в Telegram
+        console.error('Error getting disk info:', e.message);
+        // alertCount++; // Не увеличиваем alertCount для этой ошибки, чтобы не отправлять её в Telegram
     }
 
     // --- Проверка общей оперативной памяти системы ---
@@ -78,25 +70,28 @@ async function checkSystemHealth() {
         healthMessage += `   Свободно: \`${freeMemGB} GB\`\n`;
 
     } catch (e) {
-        healthMessage += `🔴 *Ошибка при получении информации о RAM системы:* ${e.message}\n`;
-        console.error('Error getting system memory info:', e);
-        alertCount++;
+        console.error('Error getting system memory info:', e.message);
+        // alertCount++;
     }
 
     // --- Время работы системы (uptime) ---
     try {
-        const osInfo = await si.osInfo(); // Добавлено await
+        const osInfo = await si.osInfo();
         const osUptimeSeconds = osInfo.uptime;
-        const days = Math.floor(osUptimeSeconds / (3600 * 24));
-        const hours = Math.floor((osUptimeSeconds % (3600 * 24)) / 3600);
-        const minutes = Math.floor((osUptimeSeconds % 3600) / 60);
+        // Проверяем, что osUptimeSeconds является числом, чтобы избежать NaN
+        if (typeof osUptimeSeconds === 'number' && !isNaN(osUptimeSeconds)) {
+            const days = Math.floor(osUptimeSeconds / (3600 * 24));
+            const hours = Math.floor((osUptimeSeconds % (3600 * 24)) / 3600);
+            const minutes = Math.floor((osUptimeSeconds % 3600) / 60);
 
-        healthMessage += `\n⏱️ *Время работы системы (Uptime):*\n`;
-        healthMessage += `   \`${days} дн. ${hours} ч. ${minutes} мин.\`\n`;
+            healthMessage += `\n⏱️ *Время работы системы (Uptime):*\n`;
+            healthMessage += `   \`${days} дн. ${hours} ч. ${minutes} мин.\`\n`;
+        } else {
+            console.error('Could not get valid system uptime. It might be NaN or undefined.');
+        }
     } catch (e) {
-        healthMessage += `🔴 *Ошибка при получении времени работы системы:* ${e.message}\n`;
-        console.error('Error getting system uptime:', e);
-        alertCount++;
+        console.error('Error getting system uptime:', e.message);
+        // alertCount++;
     }
 
     // --- Информация об ОС, Node.js, PM2 ---
@@ -112,9 +107,8 @@ async function checkSystemHealth() {
         healthMessage += `   Node.js: \`${versions.node}\`\n`;
         healthMessage += `   PM2: \`${versions.pm2}\`\n`;
     } catch (e) {
-        healthMessage += `🔴 *Ошибка при получении информации об ОС/версиях:* ${e.message}\n`;
-        console.error('Error getting OS/versions info:', e);
-        alertCount++;
+        console.error('Error getting OS/versions info:', e.message);
+        // alertCount++;
     }
 
     // --- Проверка CPU и памяти для конкретного PM2 приложения ---
