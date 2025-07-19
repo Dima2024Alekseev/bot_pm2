@@ -5,15 +5,31 @@ const si = require('systeminformation');
 require('dotenv').config();
 const { sendTelegramMessage } = require('./telegram');
 
+// --- Диагностические логи ---
+console.log(`Type of checkDiskSpace after require: ${typeof checkDiskSpace}`);
+console.log(`Type of si (systeminformation) after require: ${typeof si}`);
+console.log(`Type of si.osInfo: ${typeof si.osInfo}`);
+console.log(`Type of si.mem: ${typeof si.mem}`);
+// --- Конец диагностических логов ---
+
+
+// Получаем необходимые переменные из process.env и парсим числа
 const DISK_SPACE_THRESHOLD_PERCENT = parseInt(process.env.DISK_SPACE_THRESHOLD_PERCENT, 10);
 const CPU_THRESHOLD_PERCENT = parseInt(process.env.CPU_THRESHOLD_PERCENT, 10);
 const MEMORY_THRESHOLD_MB = parseInt(process.env.MEMORY_THRESHOLD_MB, 10);
 const PM2_APP_NAME = process.env.PM2_APP_NAME;
 const CHAT_ID = process.env.CHAT_ID;
 
+// Определяем путь к диску, который нужно проверять.
+// Обычно это корневая директория '/' для Linux, или 'C:' для Windows.
+// Убедитесь, что этот путь актуален для вашего сервера.
 const DISK_PATH_TO_CHECK = process.env.DISK_PATH_TO_CHECK || '/';
 
 
+/**
+ * Выполняет проверку состояния системы (диск, CPU, память PM2, общая RAM, uptime, OS info).
+ * Отправляет оповещения, если обнаружены проблемы.
+ */
 async function checkSystemHealth() {
     console.log('Performing scheduled system health check...');
     let healthMessage = '🩺 *Ежедневная проверка состояния системы:*\n';
@@ -21,11 +37,14 @@ async function checkSystemHealth() {
 
     // --- Проверка места на диске ---
     try {
+        // Убедитесь, что checkDiskSpace действительно является функцией
+        if (typeof checkDiskSpace !== 'function') {
+            throw new Error('checkDiskSpace is not a function. Module might not be loaded correctly.');
+        }
         const diskSpace = await checkDiskSpace(DISK_PATH_TO_CHECK);
 
         const totalGB = (diskSpace.size / (1024 ** 3)).toFixed(2);
-        // Исправлена лишняя скобка здесь:
-        const usedGB = ((diskSpace.size - diskSpace.free) / (1024 ** 3)).toFixed(2);
+        const usedGB = ((diskSpace.size - diskSpace.free) / (1024 ** 3)).toFixed(2); // Исправлена лишняя скобка
         const freeGB = (diskSpace.free / (1024 ** 3)).toFixed(2);
         const usedPercent = ((diskSpace.size - diskSpace.free) / diskSpace.size * 100).toFixed(2);
         const freePercent = (diskSpace.free / diskSpace.size * 100).toFixed(2);
@@ -66,7 +85,7 @@ async function checkSystemHealth() {
 
     // --- Время работы системы (uptime) ---
     try {
-        const osInfo = await si.osInfo();
+        const osInfo = await si.osInfo(); // Добавлено await
         const osUptimeSeconds = osInfo.uptime;
         const days = Math.floor(osUptimeSeconds / (3600 * 24));
         const hours = Math.floor((osUptimeSeconds % (3600 * 24)) / 3600);
