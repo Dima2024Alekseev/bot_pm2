@@ -1,11 +1,13 @@
+// telegram.js
 const TelegramBot = require('node-telegram-bot-api');
-require('dotenv').config(); // Загружаем переменные окружения из .env
+require('dotenv').config(); // Загружаем переменные окружения
 
 // Инициализация Telegram бота с токеном из process.env
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
 // --- Состояние пользователя для навигации по меню ---
-// Хранит текущее меню, в котором находится пользователь { chatId: 'current_menu_state' }
+// Хранит текущее меню, в котором находится пользователь { chatId: { state: 'current_menu_state', action: null } }
+// Добавляем 'action' для отслеживания ожидаемого подтверждения (например, перезапуск/остановка)
 const userStates = {};
 
 // --- Функции для отправки сообщений с Markdown и опциями ---
@@ -26,7 +28,7 @@ async function sendTelegramMessage(chatId, text, forceSend = false, options = {}
         // Если сообщение длиннее MAX_MESSAGE_LENGTH и есть символ новой строки, обрезаем по нему
         if (lastNewline !== -1 && lastNewline !== part.length - 1 && remainingText.length > MAX_MESSAGE_LENGTH) {
             part = part.substring(0, lastNewline);
-            remainingText = remainingText.substring(lastNewline + 1);
+            remainingText = remaining.substring(lastNewline + 1);
         } else {
             remainingText = remainingText.substring(MAX_MESSAGE_LENGTH);
         }

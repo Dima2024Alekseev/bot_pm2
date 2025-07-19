@@ -14,6 +14,7 @@ const PM2_APP_NAME = process.env.PM2_APP_NAME;
 const CHECK_INTERVAL_MS = parseInt(process.env.CHECK_INTERVAL_MS, 10);
 const LOG_FILE_OUT = process.env.LOG_FILE_OUT;
 const LOG_FILE_ERR = process.env.LOG_FILE_ERR;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD; // Добавляем пароль администратора
 
 // --- Обработчики команд Telegram ---
 
@@ -25,7 +26,7 @@ bot.onText(/\/start/, async (msg) => {
         bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
         return;
     }
-    userStates[chatId] = 'main'; // Устанавливаем начальное состояние пользователя
+    userStates[chatId] = { state: 'main', action: null }; // Устанавливаем начальное состояние пользователя
     await sendMessageWithKeyboard(chatId, 'Привет! Я бот для мониторинга и управления PM2. Выберите категорию:', mainKeyboard);
 });
 
@@ -33,14 +34,14 @@ bot.onText(/\/start/, async (msg) => {
 bot.onText(/🛠️ Управление/, async (msg) => {
     const chatId = msg.chat.id;
     if (String(chatId) !== String(CHAT_ID)) return;
-    userStates[chatId] = 'management'; // Изменяем состояние пользователя на "управление"
+    userStates[chatId] = { state: 'management', action: null }; // Изменяем состояние пользователя на "управление"
     await sendMessageWithKeyboard(chatId, 'Вы в меню управления. Выберите действие:', managementKeyboard);
 });
 
 bot.onText(/📊 Мониторинг/, async (msg) => {
     const chatId = msg.chat.id;
     if (String(chatId) !== String(CHAT_ID)) return;
-    userStates[chatId] = 'monitoring'; // Изменяем состояние пользователя на "мониторинг"
+    userStates[chatId] = { state: 'monitoring', action: null }; // Изменяем состояние пользователя на "мониторинг"
     await sendMessageWithKeyboard(chatId, 'Вы в меню мониторинга. Выберите информацию:', monitoringKeyboard);
 });
 
@@ -58,7 +59,7 @@ bot.onText(/❓ Помощь/, async (msg) => {
 bot.onText(/⬅️ Назад в Главное меню/, async (msg) => {
     const chatId = msg.chat.id;
     if (String(chatId) !== String(CHAT_ID)) return;
-    userStates[chatId] = 'main'; // Возвращаем состояние пользователя в "главное"
+    userStates[chatId] = { state: 'main', action: null }; // Возвращаем состояние пользователя в "главное"
     await sendMessageWithKeyboard(chatId, 'Возвращаемся в главное меню. Выберите категорию:', mainKeyboard);
 });
 
@@ -69,6 +70,7 @@ bot.onText(/📈 Статус приложения/, async (msg) => {
         bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
         return;
     }
+    userStates[chatId].action = null; // Сбрасываем ожидаемое действие
     await checkPm2AppStatus(chatId); // Вызываем функцию из pm2_monitor.js
 });
 
@@ -78,6 +80,7 @@ bot.onText(/📄 Последние (\d+) логов|📄 Последние 20 
         bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
         return;
     }
+    userStates[chatId].action = null; // Сбрасываем ожидаемое действие
 
     // Если число не указано в команде, по умолчанию берем 20
     const linesToFetch = match && match[1] ? parseInt(match[1], 10) : 20;
@@ -113,6 +116,7 @@ bot.onText(/🩺 Проверить систему/, async (msg) => {
         bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
         return;
     }
+    userStates[chatId].action = null; // Сбрасываем ожидаемое действие
     await sendTelegramMessage(chatId, 'Выполняю ручную проверку состояния системы...');
     await checkSystemHealth(); // Вызываем функцию из system_health.js
 });
@@ -123,6 +127,7 @@ bot.onText(/📋 Список всех приложений/, async (msg) => {
         bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
         return;
     }
+    userStates[chatId].action = null; // Сбрасываем ожидаемое действие
     await listAllPm2Apps(chatId); // Вызываем функцию из pm2_monitor.js
 });
 
@@ -134,7 +139,9 @@ bot.onText(/🔄 Перезапустить сервер/, async (msg) => {
         await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
         return;
     }
-    await restartPm2App(chatId); // Вызываем функцию из pm2_monitor.js
+    // Устанавливаем состояние ожидания пароля для перезапуска
+    userStates[chatId] = { state: 'awaiting_password', action: 'restart' };
+    await sendTelegramMessage(chatId, 'Введите пароль администратора для подтверждения перезапуска сервера.');
 });
 
 bot.onText(/⏹️ Остановить сервер/, async (msg) => {
@@ -143,7 +150,9 @@ bot.onText(/⏹️ Остановить сервер/, async (msg) => {
         await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
         return;
     }
-    await stopPm2App(chatId); // Вызываем функцию из pm2_monitor.js
+    // Устанавливаем состояние ожидания пароля для остановки
+    userStates[chatId] = { state: 'awaiting_password', action: 'stop' };
+    await sendTelegramMessage(chatId, 'Введите пароль администратора для подтверждения остановки сервера.');
 });
 
 bot.onText(/▶️ Запустить сервер/, async (msg) => {
@@ -152,7 +161,38 @@ bot.onText(/▶️ Запустить сервер/, async (msg) => {
         await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
         return;
     }
+    userStates[chatId].action = null; // Сбрасываем ожидаемое действие
     await startPm2App(chatId); // Вызываем функцию из pm2_monitor.js
+});
+
+// --- Новый обработчик для текстовых сообщений (проверка пароля) ---
+bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const text = msg.text;
+
+    // Игнорируем команды и сообщения от неавторизованных пользователей
+    if (text.startsWith('/') || String(chatId) !== String(CHAT_ID)) {
+        return;
+    }
+
+    // Проверяем, находится ли пользователь в состоянии ожидания пароля
+    if (userStates[chatId] && userStates[chatId].state === 'awaiting_password') {
+        if (text === ADMIN_PASSWORD) {
+            await sendTelegramMessage(chatId, 'Пароль подтвержден. Выполняю команду...');
+            // Выполняем сохраненное действие
+            if (userStates[chatId].action === 'restart') {
+                await restartPm2App(chatId);
+            } else if (userStates[chatId].action === 'stop') {
+                await stopPm2App(chatId);
+            }
+            // Сбрасываем состояние после выполнения команды
+            userStates[chatId] = { state: 'main', action: null };
+            await sendMessageWithKeyboard(chatId, 'Возвращаемся в главное меню. Выберите категорию:', mainKeyboard);
+        } else {
+            await sendTelegramMessage(chatId, 'Неверный пароль. Попробуйте снова или нажмите "⬅️ Назад в Главное меню" для отмены.');
+            // Остаемся в состоянии ожидания пароля
+        }
+    }
 });
 
 // --- Запуск системных проверок и мониторинга логов ---
