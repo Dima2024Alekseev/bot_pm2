@@ -150,9 +150,28 @@ async function listAllPm2Apps(chatId) {
 
         let message = '📋 Список всех приложений PM2:\n\n';
         list.forEach(app => {
+            let statusEmoji = '';
+            // Определяем эмодзи в зависимости от статуса
+            switch (app.pm2_env.status) {
+                case 'online':
+                    statusEmoji = '🟢 '; // Зеленый кружок для "online"
+                    break;
+                case 'stopped':
+                    statusEmoji = '⚫️ '; // Черный кружок для "stopped"
+                    break;
+                case 'errored':
+                    statusEmoji = '🔴 '; // Красный кружок для ошибок
+                    break;
+                case 'launching':
+                    statusEmoji = '🟡 '; // Желтый кружок для запуска
+                    break;
+                default:
+                    statusEmoji = '⚪️ '; // Белый кружок для неопределенного статуса
+            }
+
             message += `*Имя:* \`${app.name}\`\n`;
             message += `   *ID:* \`${app.pm_id}\`\n`;
-            message += `   *Статус:* \`${app.pm2_env.status}\`\n`;
+            message += `   *Статус:* ${statusEmoji}\`${app.pm2_env.status}\`\n`; // Добавили эмодзи сюда
             message += `   *Uptime:* ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
             message += `   *Перезапусков:* \`${app.pm2_env.restart_time}\`\n`;
             message += `   *Память:* \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
@@ -199,7 +218,7 @@ function connectAndListenPm2Events() {
                             message += `💔 *ПРИЛОЖЕНИЕ ВЫШЛО ИЗ СТРОЯ!* (Status: \`${data.process.status}\`)`;
                             break;
                         case 'online':
-                            message += `🟢 *ПРИЛОЖЕНИЕ ЗАПУЩЕНО И РАБОТАЕТ!* (Status: \`${data.process.status}\`)`;
+                            message += `✅ *ПРИЛОЖЕНИЕ ЗАПУЩЕНО И РАБОТАЕТ!* (Status: \`${data.process.status}\`)`;
                             break;
                         default:
                             message += `ℹ️ Неизвестное событие: \`${data.event}\` (Status: \`${data.process.status}\`)`;
