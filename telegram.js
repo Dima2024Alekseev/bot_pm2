@@ -37,9 +37,13 @@ async function sendTelegramMessage(chatId, text, forceSend = false, options = {}
     for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
         try {
-            // Применяем MarkdownV2 для форматирования кода, если это первая часть, добавляем переданные опции
             const currentOptions = i === 0 ? { parse_mode: 'MarkdownV2', ...options } : { parse_mode: 'MarkdownV2' };
-            await bot.sendMessage(chatId, `\`\`\`\n${part}\n\`\`\``, currentOptions);
+            
+            // Если текст должен быть в ````, то оборачиваем.
+            // Если текст не содержит специальных символов MarkdownV2 и не является логом,
+            // можно попробовать отправить его как обычный текст или без MarkdownV2
+            // Здесь мы оставляем `MarkdownV2` по умолчанию, чтобы обрабатывались жирный текст, курсив и т.д.
+            await bot.sendMessage(chatId, part, currentOptions);
             console.log('Message part sent to Telegram.');
         } catch (error) {
             // Если MarkdownV2 вызывает ошибку, пробуем отправить без него
@@ -110,6 +114,27 @@ const monitoringKeyboard = {
     }
 };
 
+// --- Новые инлайн-клавиатуры для подтверждения ---
+// callback_data включает chatId, чтобы предотвратить действия от старых или пересланных кнопок
+const confirmRestartKeyboard = (chatId) => ({
+    reply_markup: {
+        inline_keyboard: [
+            [{ text: '✅ Да, перезапустить', callback_data: `confirm_restart_${chatId}` }],
+            [{ text: '❌ Нет, отмена', callback_data: `cancel_action_${chatId}` }]
+        ]
+    }
+});
+
+const confirmStopKeyboard = (chatId) => ({
+    reply_markup: {
+        inline_keyboard: [
+            [{ text: '✅ Да, остановить', callback_data: `confirm_stop_${chatId}` }],
+            [{ text: '❌ Нет, отмена', callback_data: `cancel_action_${chatId}` }]
+        ]
+    }
+});
+
+
 // Экспортируем все необходимые сущности для использования в других модулях
 module.exports = {
     bot,
@@ -118,5 +143,7 @@ module.exports = {
     userStates,
     mainKeyboard,
     managementKeyboard,
-    monitoringKeyboard
+    monitoringKeyboard,
+    confirmRestartKeyboard, // Новая
+    confirmStopKeyboard     // Новая
 };

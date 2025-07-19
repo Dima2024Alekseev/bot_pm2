@@ -2,7 +2,8 @@
 require('dotenv').config();
 
 // Импорт зависимостей из других модулей
-const { bot, sendTelegramMessage, sendMessageWithKeyboard, userStates, mainKeyboard, managementKeyboard, monitoringKeyboard } = require('./telegram');
+// Добавлены confirmRestartKeyboard, confirmStopKeyboard
+const { bot, sendTelegramMessage, sendMessageWithKeyboard, userStates, mainKeyboard, managementKeyboard, monitoringKeyboard, confirmRestartKeyboard, confirmStopKeyboard } = require('./telegram');
 const { checkPm2AppStatus, restartPm2App, stopPm2App, startPm2App, listAllPm2Apps, connectAndListenPm2Events } = require('./pm2_monitor');
 const { checkSystemHealth } = require('./system_health');
 const { startLogWatcher, readLastLines } = require('./log_watcher');
@@ -79,7 +80,6 @@ bot.onText(/📄 Последние (\d+) логов|📄 Последние 20 
         return;
     }
 
-    // Если число не указано в команде, по умолчанию берем 20
     const linesToFetch = match && match[1] ? parseInt(match[1], 10) : 20;
 
     if (isNaN(linesToFetch) || linesToFetch <= 0) {
@@ -87,23 +87,23 @@ bot.onText(/📄 Последние (\d+) логов|📄 Последние 20 
         return;
     }
 
-    await sendTelegramMessage(chatId, `Запрашиваю последние ${linesToFetch} строк логов для ${PM2_APP_NAME}...`);
+    // Добавлена forceSend=true для отправки даже пустого текста, если логи пусты
+    await sendTelegramMessage(chatId, `Запрашиваю последние ${linesToFetch} строк логов для *${PM2_APP_NAME}*...`, true);
 
-    // Чтение логов из файлов OUT и ERR
     readLastLines(LOG_FILE_OUT, linesToFetch, async (err, outLogs) => {
         if (err) {
-            await sendTelegramMessage(chatId, `Ошибка при чтении OUT логов: ${err.message}`);
+            await sendTelegramMessage(chatId, `Ошибка при чтении OUT логов: ${err.message}`, true);
             return;
         }
-        await sendTelegramMessage(chatId, `[OUT - ${PM2_APP_NAME} - ЗАПРОС ${linesToFetch}]\n${outLogs || 'Нет записей в OUT логе.'}`);
+        await sendTelegramMessage(chatId, `\`\`\`\n[OUT - ${PM2_APP_NAME} - ЗАПРОС ${linesToFetch}]\n${outLogs || 'Нет записей в OUT логе.'}\n\`\`\``, true);
     });
 
     readLastLines(LOG_FILE_ERR, linesToFetch, async (err, errLogs) => {
         if (err) {
-            await sendTelegramMessage(chatId, `Ошибка при чтении ERR логов: ${err.message}`);
+            await sendTelegramMessage(chatId, `Ошибка при чтении ERR логов: ${err.message}`, true);
             return;
         }
-        await sendTelegramMessage(chatId, `[ERR - ${PM2_APP_NAME} - ЗАПРОС ${linesToFetch}]\n${errLogs || 'Нет записей в ERR логе.'}`);
+        await sendTelegramMessage(chatId, `\`\`\`\n[ERR - ${PM2_APP_NAME} - ЗАПРОС ${linesToFetch}]\n${errLogs || 'Нет записей в ERR логе.'}\n\`\`\``, true);
     });
 });
 
@@ -113,7 +113,7 @@ bot.onText(/🩺 Проверить систему/, async (msg) => {
         bot.sendMessage(chatId, 'Извините, у вас нет доступа к этому боту.');
         return;
     }
-    await sendTelegramMessage(chatId, 'Выполняю ручную проверку состояния системы...');
+    await sendTelegramMessage(chatId, 'Выполняю ручную проверку состояния системы...', true);
     await checkSystemHealth(); // Вызываем функцию из system_health.js
 });
 
@@ -128,24 +128,29 @@ bot.onText(/📋 Список всех приложений/, async (msg) => {
 
 
 // --- Обработка команд из подменю "Управление" ---
+// ИЗМЕНЕНО: Теперь запрашиваем подтверждение
 bot.onText(/🔄 Перезапустить сервер/, async (msg) => {
     const chatId = msg.chat.id;
     if (String(chatId) !== String(CHAT_ID)) {
         await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
         return;
     }
-    await restartPm2App(chatId); // Вызываем функцию из pm2_monitor.js
+    // Отправляем сообщение с инлайн-клавиатурой для подтверждения
+    await sendMessageWithKeyboard(chatId, `Вы уверены, что хотите перезапустить *${PM2_APP_NAME}*?`, confirmRestartKeyboard(chatId), { parse_mode: 'MarkdownV2' });
 });
 
+// ИЗМЕНЕНО: Теперь запрашиваем подтверждение
 bot.onText(/⏹️ Остановить сервер/, async (msg) => {
     const chatId = msg.chat.id;
     if (String(chatId) !== String(CHAT_ID)) {
         await sendTelegramMessage(chatId, 'Извините, у вас нет прав на выполнение этой команды.');
         return;
     }
-    await stopPm2App(chatId); // Вызываем функцию из pm2_monitor.js
+    // Отправляем сообщение с инлайн-клавиатурой для подтверждения
+    await sendMessageWithKeyboard(chatId, `Вы уверены, что хотите остановить *${PM2_APP_NAME}*?`, confirmStopKeyboard(chatId), { parse_mode: 'MarkdownV2' });
 });
 
+// Команда "Запустить сервер" не требует подтверждения, как менее критичная
 bot.onText(/▶️ Запустить сервер/, async (msg) => {
     const chatId = msg.chat.id;
     if (String(chatId) !== String(CHAT_ID)) {
@@ -155,8 +160,50 @@ bot.onText(/▶️ Запустить сервер/, async (msg) => {
     await startPm2App(chatId); // Вызываем функцию из pm2_monitor.js
 });
 
+// --- Новый обработчик инлайн-колбэков (callback_query) ---
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const data = query.data; // Получаем данные из callback_data
+
+    // Убедимся, что пользователь имеет доступ (по CHAT_ID из .env)
+    if (String(chatId) !== String(CHAT_ID)) {
+        await bot.answerCallbackQuery(query.id, { text: 'У вас нет доступа.' });
+        await sendTelegramMessage(chatId, 'Извините, у вас нет доступа к этой функции.');
+        return;
+    }
+
+    // Проверяем, что колбэк пришел именно от нашего чата, для которого он был сгенерирован
+    // Это защита от старых или пересылаемых кнопок, где `callback_data` содержит `_${chatId}`
+    if (!data.endsWith(`_${chatId}`)) {
+         await bot.answerCallbackQuery(query.id, { text: 'Эта кнопка неактивна или предназначена для другого чата.' });
+         return;
+    }
+
+    // Удаляем инлайн-клавиатуру после ответа, чтобы избежать повторных нажатий
+    // Используем `editMessageReplyMarkup` с пустой клавиатурой для удаления
+    await bot.editMessageReplyMarkup({
+        chat_id: chatId,
+        message_id: query.message.message_id,
+        reply_markup: { inline_keyboard: [] } // Пустая клавиатура удаляет кнопки
+    }).catch(e => console.error("Error editing message reply markup (might be deleted/modified):", e.message)); // Отлавливаем ошибку, если сообщение уже удалено/изменено
+
+    // Обрабатываем подтвержденное действие
+    if (data.startsWith('confirm_restart_')) {
+        await bot.answerCallbackQuery(query.id, { text: 'Перезапуск подтвержден.' }); // Всплывающее уведомление
+        await restartPm2App(chatId);
+    } else if (data.startsWith('confirm_stop_')) {
+        await bot.answerCallbackQuery(query.id, { text: 'Остановка подтверждена.' }); // Всплывающее уведомление
+        await stopPm2App(chatId);
+    } else if (data.startsWith('cancel_action_')) {
+        await bot.answerCallbackQuery(query.id, { text: 'Действие отменено.' }); // Всплывающее уведомление
+        await sendTelegramMessage(chatId, 'Действие отменено.');
+    } else {
+        await bot.answerCallbackQuery(query.id, { text: 'Неизвестная команда.' });
+    }
+});
+
+
 // --- Запуск системных проверок и мониторинга логов ---
-// Периодическая проверка состояния системы
 setInterval(() => checkSystemHealth(), CHECK_INTERVAL_MS);
 
 // Подключение к PM2 для прослушивания событий

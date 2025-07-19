@@ -15,7 +15,7 @@ const CHAT_ID = process.env.CHAT_ID; // Chat ID для отправки увед
 async function checkPm2AppStatus(chatId) {
     pm2.list(async (err, list) => {
         if (err) {
-            await sendTelegramMessage(chatId, `🔴 Ошибка при получении статуса PM2: ${err.message}`);
+            await sendTelegramMessage(chatId, `🔴 Ошибка при получении статуса PM2: ${err.message}`, true);
             console.error('Error listing PM2 processes for status check:', err.message);
             return;
         }
@@ -39,9 +39,9 @@ async function checkPm2AppStatus(chatId) {
                 statusMessage += `   ⚠️ *Внимание:* Память (\`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`) выше порога ${MEMORY_THRESHOLD_MB} MB\n`;
             }
 
-            await sendTelegramMessage(chatId, statusMessage);
+            await sendTelegramMessage(chatId, statusMessage, true);
         } else {
-            await sendTelegramMessage(chatId, `Приложение *${PM2_APP_NAME}* не найдено в PM2.`);
+            await sendTelegramMessage(chatId, `Приложение *${PM2_APP_NAME}* не найдено в PM2.`, true);
         }
     });
 }
@@ -51,15 +51,15 @@ async function checkPm2AppStatus(chatId) {
  * @param {string} chatId - ID чата для отправки сообщения.
  */
 async function restartPm2App(chatId) {
-    await sendTelegramMessage(chatId, `Запрос на перезапуск *${PM2_APP_NAME}*...`);
+    await sendTelegramMessage(chatId, `Запрос на перезапуск *${PM2_APP_NAME}*...`, true);
 
     pm2.restart(PM2_APP_NAME, async (err) => {
         if (err) {
             console.error(`Error restarting ${PM2_APP_NAME}:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 Ошибка при перезапуске *${PM2_APP_NAME}*: ${err.message}`);
+            await sendTelegramMessage(chatId, `🔴 Ошибка при перезапуске *${PM2_APP_NAME}*: ${err.message}`, true);
             return;
         }
-        await sendTelegramMessage(chatId, `🟢 *${PM2_APP_NAME}* успешно запрошен на перезапуск.`);
+        await sendTelegramMessage(chatId, `🟢 *${PM2_APP_NAME}* успешно запрошен на перезапуск.`, true);
     });
 }
 
@@ -68,15 +68,15 @@ async function restartPm2App(chatId) {
  * @param {string} chatId - ID чата для отправки сообщения.
  */
 async function stopPm2App(chatId) {
-    await sendTelegramMessage(chatId, `Запрос на остановку *${PM2_APP_NAME}*...`);
+    await sendTelegramMessage(chatId, `Запрос на остановку *${PM2_APP_NAME}*...`, true);
 
     pm2.stop(PM2_APP_NAME, async (err) => {
         if (err) {
             console.error(`Error stopping ${PM2_APP_NAME}:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 Ошибка при остановке *${PM2_APP_NAME}*: ${err.message}`);
+            await sendTelegramMessage(chatId, `🔴 Ошибка при остановке *${PM2_APP_NAME}*: ${err.message}`, true);
             return;
         }
-        await sendTelegramMessage(chatId, `⚫️ *${PM2_APP_NAME}* успешно запрошен на остановку.`);
+        await sendTelegramMessage(chatId, `⚫️ *${PM2_APP_NAME}* успешно запрошен на остановку.`, true);
     });
 }
 
@@ -85,15 +85,15 @@ async function stopPm2App(chatId) {
  * @param {string} chatId - ID чата для отправки сообщения.
  */
 async function startPm2App(chatId) {
-    await sendTelegramMessage(chatId, `Запрос на запуск *${PM2_APP_NAME}*...`);
+    await sendTelegramMessage(chatId, `Запрос на запуск *${PM2_APP_NAME}*...`, true);
 
     pm2.start(PM2_APP_NAME, async (err) => {
         if (err) {
             console.error(`Error starting ${PM2_APP_NAME}:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 Ошибка при запуске *${PM2_APP_NAME}*: ${err.message}`);
+            await sendTelegramMessage(chatId, `🔴 Ошибка при запуске *${PM2_APP_NAME}*: ${err.message}`, true);
             return;
         }
-        await sendTelegramMessage(chatId, `🟢 *${PM2_APP_NAME}* успешно запрошен на запуск.`);
+        await sendTelegramMessage(chatId, `🟢 *${PM2_APP_NAME}* успешно запрошен на запуск.`, true);
     });
 }
 
@@ -102,17 +102,17 @@ async function startPm2App(chatId) {
  * @param {string} chatId - ID чата для отправки сообщения.
  */
 async function listAllPm2Apps(chatId) {
-    await sendTelegramMessage(chatId, 'Запрашиваю список всех приложений PM2...');
+    await sendTelegramMessage(chatId, 'Запрашиваю список всех приложений PM2...', true);
 
     pm2.list(async (err, list) => {
         if (err) {
-            await sendTelegramMessage(chatId, `🔴 Ошибка при получении списка приложений PM2: ${err.message}`);
+            await sendTelegramMessage(chatId, `🔴 Ошибка при получении списка приложений PM2: ${err.message}`, true);
             console.error('Error listing all PM2 processes:', err.message);
             return;
         }
 
         if (list.length === 0) {
-            await sendTelegramMessage(chatId, 'В PM2 не найдено запущенных приложений.');
+            await sendTelegramMessage(chatId, 'В PM2 не найдено запущенных приложений.', true);
             return;
         }
 
@@ -128,7 +128,7 @@ async function listAllPm2Apps(chatId) {
             message += `\n`;
         });
 
-        await sendTelegramMessage(chatId, message);
+        await sendTelegramMessage(chatId, message, true);
     });
 }
 

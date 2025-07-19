@@ -72,10 +72,10 @@ function processLogFile(filePath, lastPositionRef, type) {
                     const alertType = checkLogForKeywords(line);
                     if (alertType) {
                         // Отправляем оповещение, если найдено ключевое слово
-                        sendTelegramMessage(CHAT_ID, `🚨 *${alertType}* (*${PM2_APP_NAME}*)\n\`\`\`\n${line}\n\`\`\``);
+                        sendTelegramMessage(CHAT_ID, `🚨 *${alertType}* (*${PM2_APP_NAME}*)\n\`\`\`\n${line}\n\`\`\``, true);
                     } else {
                         // Отправляем обычную новую строку лога
-                        sendTelegramMessage(CHAT_ID, `[${type.toUpperCase()} - *${PM2_APP_NAME}* - NEW]\n\`\`\`\n${line}\n\`\`\``);
+                        sendTelegramMessage(CHAT_ID, `[${type.toUpperCase()} - *${PM2_APP_NAME}* - NEW]\n\`\`\`\n${line}\n\`\`\``, true);
                     }
                 }
             });
@@ -85,9 +85,9 @@ function processLogFile(filePath, lastPositionRef, type) {
                 if (unprocessedLines.trim() !== '') {
                     const alertType = checkLogForKeywords(unprocessedLines);
                     if (alertType) {
-                        sendTelegramMessage(CHAT_ID, `🚨 *${alertType}* (*${PM2_APP_NAME}*)\n\`\`\`\n${unprocessedLines}\n\`\`\``);
+                        sendTelegramMessage(CHAT_ID, `🚨 *${alertType}* (*${PM2_APP_NAME}*)\n\`\`\`\n${unprocessedLines}\n\`\`\``, true);
                     } else {
-                        sendTelegramMessage(CHAT_ID, `[${type.toUpperCase()} - *${PM2_APP_NAME}* - NEW]\n\`\`\`\n${unprocessedLines}\n\`\`\``);
+                        sendTelegramMessage(CHAT_ID, `[${type.toUpperCase()} - *${PM2_APP_NAME}* - NEW]\n\`\`\`\n${unprocessedLines}\n\`\`\``, true);
                     }
                 }
                 lastPositionRef.value = currentSize; // Обновляем последнюю прочитанную позицию

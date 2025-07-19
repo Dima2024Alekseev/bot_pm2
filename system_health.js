@@ -1,4 +1,4 @@
-const { getDrives } = require('node-disk-info');
+const nodeDiskInfo = require('node-disk-info'); // ИЗМЕНЕНО: импортируем весь модуль
 const pm2 = require('pm2'); // Нужен для получения информации о CPU/памяти PM2 процессов
 require('dotenv').config(); // Загружаем переменные окружения
 const { sendTelegramMessage } = require('./telegram'); // Импортируем функцию для отправки сообщений
@@ -21,7 +21,7 @@ async function checkSystemHealth() {
 
     // --- Проверка места на диске ---
     try {
-        const drives = await getDrives(); // Получаем информацию о дисках
+        const drives = await nodeDiskInfo.getDrives(); // ИЗМЕНЕНО: вызываем через nodeDiskInfo
         let diskInfo = '';
         drives.forEach(drive => {
             const usedPercent = (drive.used / drive.total * 100).toFixed(2);
@@ -31,7 +31,7 @@ async function checkSystemHealth() {
             diskInfo += `    Использовано: \`${(drive.used / (1024 ** 3)).toFixed(2)} GB\` (\`${usedPercent}%\`)\n`;
             diskInfo += `    Свободно: \`${(drive.available / (1024 ** 3)).toFixed(2)} GB\` (\`${freePercent}%\`)\n`;
 
-            if (freePercent < DISK_SPACE_THRESHOLD_PERCENT) {
+            if (parseFloat(freePercent) < DISK_SPACE_THRESHOLD_PERCENT) { // Убедимся, что сравниваем числа
                 healthMessage += `🚨 *Внимание:* Низкое место на диске *${drive.mounted}*: \`${freePercent}%\` свободно (ниже \`${DISK_SPACE_THRESHOLD_PERCENT}%\`)\n`;
                 alertCount++;
             }
