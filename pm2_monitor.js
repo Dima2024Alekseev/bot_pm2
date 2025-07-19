@@ -80,7 +80,7 @@ async function stopPm2App(chatId) {
 
         // Проверяем, если приложение уже остановлено или не найдено
         if (!app || app.pm2_env.status === 'stopped' || app.pm2_env.status === 'stopped_waiting') {
-            await sendTelegramMessage(chatId, `ℹ️ Сервер *${PM2_APP_NAME}* уже остановлен или не запущен.`);
+            await sendTelegramMessage(chatId, `ℹ️ Сервер *${PM2_APP_NAME}* уже остановлен и не запущен.`);
             return;
         }
 
