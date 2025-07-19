@@ -1,3 +1,4 @@
+// pm2_monitor.js
 const pm2 = require('pm2');
 require('dotenv').config(); // Загружаем переменные окружения
 const { sendTelegramMessage } = require('./telegram'); // Импортируем функцию для отправки сообщений в Telegram
@@ -24,19 +25,19 @@ async function checkPm2AppStatus(chatId) {
 
         if (app) {
             let statusMessage = `📊 Статус *${PM2_APP_NAME}*:\n`;
-            statusMessage += `   Статус: \`${app.pm2_env.status}\`\n`;
+            statusMessage += `   Статус: \`${app.pm2_env.status}\`\n`;
             // Рассчитываем uptime в минутах
-            statusMessage += `   Uptime: ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
-            statusMessage += `   Перезапусков: \`${app.pm2_env.restart_time}\`\n`;
-            statusMessage += `   Память: \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
-            statusMessage += `   CPU: \`${app.monit.cpu}%\`\n`;
+            statusMessage += `   Uptime: ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
+            statusMessage += `   Перезапусков: \`${app.pm2_env.restart_time}\`\n`;
+            statusMessage += `   Память: \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
+            statusMessage += `   CPU: \`${app.monit.cpu}%\`\n`;
 
             // Добавляем предупреждения, если пороги превышены
             if (app.monit.cpu > CPU_THRESHOLD_PERCENT) {
-                statusMessage += `   ⚠️ *Внимание:* CPU (\`${app.monit.cpu}%\`) выше порога ${CPU_THRESHOLD_PERCENT}%\n`;
+                statusMessage += `   ⚠️ *Внимание:* CPU (\`${app.monit.cpu}%\`) выше порога ${CPU_THRESHOLD_PERCENT}%\n`;
             }
             if ((app.monit.memory / 1024 / 1024) > MEMORY_THRESHOLD_MB) {
-                statusMessage += `   ⚠️ *Внимание:* Память (\`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`) выше порога ${MEMORY_THRESHOLD_MB} MB\n`;
+                statusMessage += `   ⚠️ *Внимание:* Память (\`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`) выше порога ${MEMORY_THRESHOLD_MB} MB\n`;
             }
 
             await sendTelegramMessage(chatId, statusMessage);
@@ -85,15 +86,30 @@ async function stopPm2App(chatId) {
  * @param {string} chatId - ID чата для отправки сообщения.
  */
 async function startPm2App(chatId) {
-    await sendTelegramMessage(chatId, `Запрос на запуск *${PM2_APP_NAME}*...`);
-
-    pm2.start(PM2_APP_NAME, async (err) => {
+    pm2.list(async (err, list) => {
         if (err) {
-            console.error(`Error starting ${PM2_APP_NAME}:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 Ошибка при запуске *${PM2_APP_NAME}*: ${err.message}`);
+            console.error(`Error listing PM2 processes for start check:`, err.message);
+            await sendTelegramMessage(chatId, `🔴 Ошибка при проверке статуса PM2 для запуска: ${err.message}`);
             return;
         }
-        await sendTelegramMessage(chatId, `🟢 *${PM2_APP_NAME}* успешно запрошен на запуск.`);
+
+        const app = list.find(p => p.name === PM2_APP_NAME);
+
+        if (app && app.pm2_env.status === 'online') {
+            await sendTelegramMessage(chatId, `ℹ️ Сервер *${PM2_APP_NAME}* уже запущен.`);
+            return;
+        }
+
+        await sendTelegramMessage(chatId, `Запрос на запуск *${PM2_APP_NAME}*...`);
+
+        pm2.start(PM2_APP_NAME, async (err) => {
+            if (err) {
+                console.error(`Error starting ${PM2_APP_NAME}:`, err.message);
+                await sendTelegramMessage(chatId, `🔴 Ошибка при запуске *${PM2_APP_NAME}*: ${err.message}`);
+                return;
+            }
+            await sendTelegramMessage(chatId, `🟢 *${PM2_APP_NAME}* успешно запрошен на запуск.`);
+        });
     });
 }
 
@@ -119,12 +135,12 @@ async function listAllPm2Apps(chatId) {
         let message = '📋 Список всех приложений PM2:\n\n';
         list.forEach(app => {
             message += `*Имя:* \`${app.name}\`\n`;
-            message += `  *ID:* \`${app.pm_id}\`\n`;
-            message += `  *Статус:* \`${app.pm2_env.status}\`\n`;
-            message += `  *Uptime:* ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
-            message += `  *Перезапусков:* \`${app.pm2_env.restart_time}\`\n`;
-            message += `  *Память:* \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
-            message += `  *CPU:* \`${app.monit.cpu}%\`\n`;
+            message += `   *ID:* \`${app.pm_id}\`\n`;
+            message += `   *Статус:* \`${app.pm2_env.status}\`\n`;
+            message += `   *Uptime:* ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
+            message += `   *Перезапусков:* \`${app.pm2_env.restart_time}\`\n`;
+            message += `   *Память:* \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
+            message += `   *CPU:* \`${app.monit.cpu}%\`\n`;
             message += `\n`;
         });
 
