@@ -1,7 +1,7 @@
 // system_health.js
-const NodeDiskInfo = require('node-disk-info'); // Исправленный импорт для node-disk-info
+const checkDiskSpace = require('check-disk-space'); // Новая библиотека для проверки дискового пространства
 const pm2 = require('pm2');
-const si = require('systeminformation'); // Импортируем systeminformation
+const si = require('systeminformation');
 require('dotenv').config();
 const { sendTelegramMessage } = require('./telegram');
 
@@ -11,6 +11,12 @@ const CPU_THRESHOLD_PERCENT = parseInt(process.env.CPU_THRESHOLD_PERCENT, 10);
 const MEMORY_THRESHOLD_MB = parseInt(process.env.MEMORY_THRESHOLD_MB, 10);
 const PM2_APP_NAME = process.env.PM2_APP_NAME;
 const CHAT_ID = process.env.CHAT_ID;
+
+// Определяем путь к диску, который нужно проверять.
+// Обычно это корневая директория '/' для Linux, или 'C:' для Windows.
+// Убедитесь, что этот путь актуален для вашего сервера.
+const DISK_PATH_TO_CHECK = process.env.DISK_PATH_TO_CHECK || '/';
+
 
 /**
  * Выполняет проверку состояния системы (диск, CPU, память PM2, общая RAM, uptime, OS info).
@@ -23,24 +29,25 @@ async function checkSystemHealth() {
 
     // --- Проверка места на диске ---
     try {
-        const drives = await NodeDiskInfo.getDrives(); // Использование getDrives как метода объекта
-        let diskInfo = '';
-        drives.forEach(drive => {
-            const usedPercent = (drive.used / drive.total * 100).toFixed(2);
-            const freePercent = (drive.available / drive.total * 100).toFixed(2);
-            diskInfo += `   Диск *${drive.mounted}*:\n`;
-            diskInfo += `     Всего: \`${(drive.total / (1024 ** 3)).toFixed(2)} GB\`\n`;
-            diskInfo += `     Использовано: \`${(drive.used / (1024 ** 3)).toFixed(2)} GB\` (\`${usedPercent}%\`)\n`;
-            diskInfo += `     Свободно: \`${(drive.available / (1024 ** 3)).toFixed(2)} GB\` (\`${freePercent}%\`)\n`;
+        const diskSpace = await checkDiskSpace(DISK_PATH_TO_CHECK);
 
-            if (parseFloat(freePercent) < DISK_SPACE_THRESHOLD_PERCENT) {
-                healthMessage += `🚨 *Внимание:* Низкое место на диске *${drive.mounted}*: \`${freePercent}%\` свободно (ниже \`${DISK_SPACE_THRESHOLD_PERCENT}%\`)\n`;
-                alertCount++;
-            }
-        });
-        healthMessage += `\n💾 *Информация о дисках:*\n${diskInfo}`;
+        const totalGB = (diskSpace.size / (1024 ** 3)).toFixed(2);
+        const freeGB = (diskSpace.free / (1024 ** 3)).toFixed(2);
+        const usedGB = (diskSpace.size - diskSpace.free) / (1024 ** 3)).toFixed(2);
+        const usedPercent = ((diskSpace.size - diskSpace.free) / diskSpace.size * 100).toFixed(2);
+        const freePercent = (diskSpace.free / diskSpace.size * 100).toFixed(2);
+
+        healthMessage += `\n💾 *Информация о диске (${DISK_PATH_TO_CHECK}):*\n`;
+        healthMessage += `   Всего: \`${totalGB} GB\`\n`;
+        healthMessage += `   Использовано: \`${usedGB} GB\` (\`${usedPercent}%\`)\n`;
+        healthMessage += `   Свободно: \`${freeGB} GB\` (\`${freePercent}%\`)\n`;
+
+        if (parseFloat(freePercent) < DISK_SPACE_THRESHOLD_PERCENT) {
+            healthMessage += `🚨 *Внимание:* Низкое место на диске *${DISK_PATH_TO_CHECK}*: \`${freePercent}%\` свободно (ниже \`${DISK_SPACE_THRESHOLD_PERCENT}%\`)\n`;
+            alertCount++;
+        }
     } catch (e) {
-        healthMessage += `🔴 *Ошибка при получении информации о дисках:* ${e.message}\n`;
+        healthMessage += `🔴 *Ошибка при получении информации о диске:* ${e.message}\n`;
         console.error('Error getting disk info:', e);
         alertCount++;
     }
@@ -69,7 +76,7 @@ async function checkSystemHealth() {
 
     // --- Время работы системы (uptime) ---
     try {
-        const osInfo = await si.osInfo(); // Добавлено await для корректного получения данных
+        const osInfo = await si.osInfo();
         const osUptimeSeconds = osInfo.uptime;
         const days = Math.floor(osUptimeSeconds / (3600 * 24));
         const hours = Math.floor((osUptimeSeconds % (3600 * 24)) / 3600);
@@ -107,10 +114,7 @@ async function checkSystemHealth() {
             healthMessage += `🔴 *Ошибка при получении списка PM2 приложений для проверки:* ${err.message}\n`;
             console.error('Error listing PM2 processes for health check:', err.message);
             alertCount++;
-            // Отправляем сообщение, если ошибка PM2, даже если других проблем нет
-            if (alertCount > 0) {
-                 await sendTelegramMessage(CHAT_ID, healthMessage, true);
-            }
+            await sendTelegramMessage(CHAT_ID, healthMessage, true);
             return;
         }
 
@@ -132,18 +136,8 @@ async function checkSystemHealth() {
             healthMessage += `\nПриложение *${PM2_APP_NAME}* не найдено в PM2 для проверки CPU/памяти.\n`;
         }
 
-        // Отправляем сообщение только если были обнаружены проблемы
-        if (alertCount > 0) {
-            await sendTelegramMessage(CHAT_ID, healthMessage, true);
-        } else {
-            // Если нет проблем и это не регулярная проверка, можно ничего не отправлять
-            // Для ручного запроса, вероятно, всегда стоит отправлять сводку, даже если все в порядке
-            // Если checkSystemHealth вызывается по расписанию и нет алертов, можно опустить отправку
-            // Но для команды "Проверить систему" всегда лучше вывести полный отчет.
-            // Учитывая, что checkSystemHealth вызывается также из index.js по команде,
-            // логичнее всегда отправлять healthMessage, независимо от alertCount.
-            // Изменим логику отправки на безусловную, если вы хотите полный отчет по команде.
-            await sendTelegramMessage(CHAT_ID, healthMessage, true);
+        await sendTelegramMessage(CHAT_ID, healthMessage, true);
+        if (alertCount === 0) {
             console.log('System health check passed without alerts.');
         }
     });
