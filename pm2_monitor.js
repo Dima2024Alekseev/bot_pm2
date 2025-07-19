@@ -69,15 +69,31 @@ async function restartPm2App(chatId) {
  * @param {string} chatId - ID чата для отправки сообщения.
  */
 async function stopPm2App(chatId) {
-    await sendTelegramMessage(chatId, `Запрос на остановку *${PM2_APP_NAME}*...`);
-
-    pm2.stop(PM2_APP_NAME, async (err) => {
+    pm2.list(async (err, list) => {
         if (err) {
-            console.error(`Error stopping ${PM2_APP_NAME}:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 Ошибка при остановке *${PM2_APP_NAME}*: ${err.message}`);
+            console.error(`Error listing PM2 processes for stop check:`, err.message);
+            await sendTelegramMessage(chatId, `🔴 Ошибка при проверке статуса PM2 для остановки: ${err.message}`);
             return;
         }
-        await sendTelegramMessage(chatId, `⚫️ *${PM2_APP_NAME}* успешно запрошен на остановку.`);
+
+        const app = list.find(p => p.name === PM2_APP_NAME);
+
+        // Проверяем, если приложение уже остановлено или не найдено
+        if (!app || app.pm2_env.status === 'stopped' || app.pm2_env.status === 'stopped_waiting') {
+            await sendTelegramMessage(chatId, `ℹ️ Сервер *${PM2_APP_NAME}* уже остановлен или не запущен.`);
+            return;
+        }
+
+        await sendTelegramMessage(chatId, `Запрос на остановку *${PM2_APP_NAME}*...`);
+
+        pm2.stop(PM2_APP_NAME, async (err) => {
+            if (err) {
+                console.error(`Error stopping ${PM2_APP_NAME}:`, err.message);
+                await sendTelegramMessage(chatId, `🔴 Ошибка при остановке *${PM2_APP_NAME}*: ${err.message}`);
+                return;
+            }
+            await sendTelegramMessage(chatId, `⚫️ *${PM2_APP_NAME}* успешно запрошен на остановку.`);
+        });
     });
 }
 
