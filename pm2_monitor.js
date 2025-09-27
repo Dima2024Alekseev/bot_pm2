@@ -175,12 +175,12 @@ async function listAllPm2Apps(chatId) {
 
         let message = '📋 Список всех приложений PM2:\n\n';
         list.forEach(app => {
-            message += `*Имя:* \`${app.name}\`\n`;
+            message += `*Наименование приложения:* \`${app.name}\`\n`;
             message += `   *ID:* \`${app.pm_id}\`\n`;
             message += `   *Статус:* \`${app.pm2_env.status}\`\n`;
             // Используем новую функцию для форматирования uptime
-            message += `   *Uptime:* ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
-            message += `   *Перезапусков:* \`${app.pm2_env.restart_time}\`\n`;
+            message += `   *Время работы:* ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
+            message += `   *Кол-во перезапусков:* \`${app.pm2_env.restart_time}\`\n`;
             message += `   *Память:* \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
             message += `   *CPU:* \`${app.monit.cpu}%\`\n`;
             message += `\n`;
