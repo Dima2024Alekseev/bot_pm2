@@ -79,12 +79,12 @@ async function checkPm2AppStatus(chatId) {
 
         if (app) {
             let statusMessage = `📊 Наименование приложения - ${PM2_APP_NAME}\n`;
-            statusMessage += `   Статус: \`${app.pm2_env.status}\`\n`;
+            statusMessage += `Статус: \`${app.pm2_env.status}\`\n`;
             // Используем новую функцию для форматирования uptime
-            statusMessage += `   Время работы: ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
-            statusMessage += `   Кол-во перезапусков: \`${app.pm2_env.restart_time}\`\n`;
-            statusMessage += `   Память: \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
-            statusMessage += `   CPU: \`${app.monit.cpu}%\`\n`;
+            statusMessage += `Время работы: ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
+            statusMessage += `Кол-во перезапусков: \`${app.pm2_env.restart_time}\`\n`;
+            statusMessage += `Память: \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
+            statusMessage += `CPU: \`${app.monit.cpu}%\`\n`;
 
             // Добавляем предупреждения, если пороги превышены
             if (app.monit.cpu > CPU_THRESHOLD_PERCENT) {
