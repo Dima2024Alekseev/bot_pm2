@@ -49,11 +49,11 @@ async function checkPm2AppStatus(chatId) {
         const app = list.find(p => p.name === PM2_APP_NAME); // Находим наше приложение по имени
 
         if (app) {
-            let statusMessage = `📊 Статус *${PM2_APP_NAME}*:\n`;
+            let statusMessage = `📊 Наименование приложения *${PM2_APP_NAME}*:\n`;
             statusMessage += `   Статус: \`${app.pm2_env.status}\`\n`;
             // Используем новую функцию для форматирования uptime
-            statusMessage += `   Uptime: ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
-            statusMessage += `   Перезапусков: \`${app.pm2_env.restart_time}\`\n`;
+            statusMessage += `   Время работы: ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
+            statusMessage += `   Кол-во перезапусков: \`${app.pm2_env.restart_time}\`\n`;
             statusMessage += `   Память: \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
             statusMessage += `   CPU: \`${app.monit.cpu}%\`\n`;
 
