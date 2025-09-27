@@ -1,4 +1,3 @@
-// pm2_monitor.js
 const pm2 = require('pm2');
 require('dotenv').config(); // Загружаем переменные окружения
 const { sendTelegramMessage } = require('./telegram'); // Импортируем функцию для отправки сообщений в Telegram
@@ -10,15 +9,45 @@ const MEMORY_THRESHOLD_MB = parseInt(process.env.MEMORY_THRESHOLD_MB, 10);
 const CHAT_ID = process.env.CHAT_ID; // Chat ID для отправки уведомлений о событиях PM2
 
 /**
- * Форматирует uptime в удобный вид: дни, часы, минуты.
+ * Форматирует uptime в удобный вид: годы и месяцы, если больше 12 месяцев; месяцы и дни, если больше 30 дней; иначе дни, часы, минуты.
  * @param {number} uptimeMs - Время в миллисекундах.
- * @returns {string} - Форматированная строка (например, "2 дн. 5 ч. 30 мин" или "45 мин").
+ * @returns {string} - Форматированная строка (например, "1 год 2 мес." или "1 мес. 5 дн." или "2 дн. 5 ч. 30 мин").
  */
 function formatUptime(uptimeMs) {
     if (!uptimeMs) return 'N/A';
 
     const uptimeSeconds = uptimeMs / 1000;
     const days = Math.floor(uptimeSeconds / 86400);
+
+    // Если uptime больше или равно 12 месяцам (365 дней), показываем годы и месяцы
+    if (days >= 365) {
+        const years = Math.floor(days / 365);
+        const remainingMonths = Math.floor((days % 365) / 30);
+        let uptimeStr = '';
+        if (years > 0) {
+            uptimeStr += `${years} год${years > 1 ? 'а' : ''} `;
+        }
+        if (remainingMonths > 0 || years === 0) {
+            uptimeStr += `${remainingMonths} мес.`;
+        }
+        return uptimeStr.trim();
+    }
+
+    // Если uptime больше или равно 30 дням, но меньше 12 месяцев, показываем месяцы и дни
+    if (days >= 30) {
+        const months = Math.floor(days / 30);
+        const remainingDays = days % 30;
+        let uptimeStr = '';
+        if (months > 0) {
+            uptimeStr += `${months} мес. `;
+        }
+        if (remainingDays > 0 || months === 0) {
+            uptimeStr += `${remainingDays} дн`;
+        }
+        return uptimeStr.trim();
+    }
+
+    // Если меньше 30 дней, используем текущий формат
     const hours = Math.floor((uptimeSeconds % 86400) / 3600);
     const minutes = Math.floor((uptimeSeconds % 3600) / 60);
 
@@ -26,7 +55,7 @@ function formatUptime(uptimeMs) {
     if (days > 0) {
         uptimeStr += `${days} дн. `;
     }
-    if (hours > 0 || days > 0) { // Показываем часы, если есть дни или часы > 0
+    if (hours > 0 || days > 0) {
         uptimeStr += `${hours} ч. `;
     }
     uptimeStr += `${minutes} мин`;
