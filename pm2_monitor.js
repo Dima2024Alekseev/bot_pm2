@@ -49,7 +49,7 @@ async function checkPm2AppStatus(chatId) {
         const app = list.find(p => p.name === PM2_APP_NAME); // Находим наше приложение по имени
 
         if (app) {
-            let statusMessage = `📊 Наименование приложения - ${PM2_APP_NAME}:\n`;
+            let statusMessage = `📊 Наименование приложения - ${PM2_APP_NAME}\n`;
             statusMessage += `   Статус: \`${app.pm2_env.status}\`\n`;
             // Используем новую функцию для форматирования uptime
             statusMessage += `   Время работы: ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
@@ -175,14 +175,14 @@ async function listAllPm2Apps(chatId) {
 
         let message = '📋 Список всех приложений PM2:\n\n';
         list.forEach(app => {
-            message += `*Наименование приложения:* \`${app.name}\`\n`;
-            message += `   *ID:* \`${app.pm_id}\`\n`;
-            message += `   *Статус:* \`${app.pm2_env.status}\`\n`;
+            message += `Наименование приложения: \`${app.name}\`\n`;
+            message += `ID: \`${app.pm_id}\`\n`;
+            message += `Статус: \`${app.pm2_env.status}\`\n`;
             // Используем новую функцию для форматирования uptime
-            message += `   *Время работы:* ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
-            message += `   *Кол-во перезапусков:* \`${app.pm2_env.restart_time}\`\n`;
-            message += `   *Память:* \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
-            message += `   *CPU:* \`${app.monit.cpu}%\`\n`;
+            message += `Время работы: ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
+            message += `Кол-во перезапусков: \`${app.pm2_env.restart_time}\`\n`;
+            message += `Память: \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
+            message += `CPU: \`${app.monit.cpu}%\`\n`;
             message += `\n`;
         });
 
