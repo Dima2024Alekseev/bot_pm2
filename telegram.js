@@ -1,278 +1,124 @@
-const pm2 = require('pm2');
+// telegram.js
+const TelegramBot = require('node-telegram-bot-api');
 require('dotenv').config(); // Загружаем переменные окружения
-const { sendTelegramMessage } = require('./telegram'); // Импортируем функцию для отправки сообщений в Telegram
 
-// Получаем необходимые переменные из process.env
-const PM2_APP_NAME = process.env.PM2_APP_NAME;
-const CPU_THRESHOLD_PERCENT = parseInt(process.env.CPU_THRESHOLD_PERCENT, 10);
-const MEMORY_THRESHOLD_MB = parseInt(process.env.MEMORY_THRESHOLD_MB, 10);
-const CHAT_ID = process.env.CHAT_ID; // Chat ID для отправки уведомлений о событиях PM2
+// Инициализация Telegram бота с токеном из process.env
+const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
-/**
- * Форматирует uptime в удобный вид: годы и месяцы, если больше 12 месяцев; месяцы и дни, если больше 30 дней; иначе дни, часы, минуты.
- * @param {number} uptimeMs - Время в миллисекундах.
- * @returns {string} - Форматированная строка (например, "1 год 2 мес." или "1 мес. 5 дн." или "2 дн. 5 ч. 30 мин").
- */
-function formatUptime(uptimeMs) {
-    if (!uptimeMs) return 'N/A';
+// --- Состояние пользователя для навигации по меню ---
+// Хранит текущее меню, в котором находится пользователь { chatId: { state: 'current_menu_state', action: null } }
+// Добавляем 'action' для отслеживания ожидаемого подтверждения (например, перезапуск/остановка)
+const userStates = {};
 
-    const uptimeSeconds = uptimeMs / 1000;
-    const days = Math.floor(uptimeSeconds / 86400);
-
-    // Если uptime больше или равно 12 месяцам (365 дней), показываем годы и месяцы
-    if (days >= 365) {
-        const years = Math.floor(days / 365);
-        const remainingMonths = Math.floor((days % 365) / 30);
-        let uptimeStr = '';
-        if (years > 0) {
-            uptimeStr += `${years} год${years > 1 ? 'а' : ''} `;
-        }
-        if (remainingMonths > 0 || years === 0) {
-            uptimeStr += `${remainingMonths} мес.`;
-        }
-        return uptimeStr.trim();
+// --- Функции для отправки сообщений с Markdown и опциями ---
+async function sendTelegramMessage(chatId, text, forceSend = false, options = {}) {
+    // Не отправляем пустые сообщения, если это не принудительная отправка
+    if (!text.trim() && !forceSend) {
+        return;
     }
 
-    // Если uptime больше или равно 30 дням, но меньше 12 месяцев, показываем месяцы и дни
-    if (days >= 30) {
-        const months = Math.floor(days / 30);
-        const remainingDays = days % 30;
-        let uptimeStr = '';
-        if (months > 0) {
-            uptimeStr += `${months} мес. `;
-        }
-        if (remainingDays > 0 || months === 0) {
-            uptimeStr += `${remainingDays} дн`;
-        }
-        return uptimeStr.trim();
-    }
+    const MAX_MESSAGE_LENGTH = 4000; // Максимальная длина сообщения в Telegram
+    let parts = [];
+    let remainingText = text;
 
-    // Если меньше 30 дней, используем текущий формат
-    const hours = Math.floor((uptimeSeconds % 86400) / 3600);
-    const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-
-    let uptimeStr = '';
-    if (days > 0) {
-        uptimeStr += `${days} дн. `;
-    }
-    if (hours > 0 || days > 0) {
-        uptimeStr += `${hours} ч. `;
-    }
-    uptimeStr += `${minutes} мин`;
-
-    return uptimeStr.trim(); // Убираем лишние пробелы
-}
-
-/**
- * Проверяет статус конкретного PM2 приложения и отправляет его в Telegram.
- * @param {string} chatId - ID чата для отправки сообщения.
- */
-async function checkPm2AppStatus(chatId) {
-    pm2.list(async (err, list) => {
-        if (err) {
-            await sendTelegramMessage(chatId, `🔴 Ошибка при получении статуса PM2: ${err.message}`);
-            console.error('Error listing PM2 processes for status check:', err.message);
-            return;
-        }
-
-        const app = list.find(p => p.name === PM2_APP_NAME); // Находим наше приложение по имени
-
-        if (app) {
-            let statusMessage = `📊 Наименование приложения - ${PM2_APP_NAME}\n`;
-            statusMessage += `   Статус: \`${app.pm2_env.status}\`\n`;
-            // Используем новую функцию для форматирования uptime
-            statusMessage += `   Время работы: ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
-            statusMessage += `   Кол-во перезапусков: \`${app.pm2_env.restart_time}\`\n`;
-            statusMessage += `   Память: \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
-            statusMessage += `   CPU: \`${app.monit.cpu}%\`\n`;
-
-            // Добавляем предупреждения, если пороги превышены
-            if (app.monit.cpu > CPU_THRESHOLD_PERCENT) {
-                statusMessage += `   ⚠️ *Внимание:* CPU (\`${app.monit.cpu}%\`) выше порога ${CPU_THRESHOLD_PERCENT}%\n`;
-            }
-            if ((app.monit.memory / 1024 / 1024) > MEMORY_THRESHOLD_MB) {
-                statusMessage += `   ⚠️ *Внимание:* Память (\`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`) выше порога ${MEMORY_THRESHOLD_MB} MB\n`;
-            }
-
-            await sendTelegramMessage(chatId, statusMessage);
+    // Разделяем длинные сообщения на части
+    while (remainingText.length > 0) {
+        let part = remainingText.substring(0, MAX_MESSAGE_LENGTH);
+        let lastNewline = part.lastIndexOf('\n');
+        // Если сообщение длиннее MAX_MESSAGE_LENGTH и есть символ новой строки, обрезаем по нему
+        if (lastNewline !== -1 && lastNewline !== part.length - 1 && remainingText.length > MAX_MESSAGE_LENGTH) {
+            part = part.substring(0, lastNewline);
+            remainingText = remaining.substring(lastNewline + 1);
         } else {
-            await sendTelegramMessage(chatId, `Приложение *${PM2_APP_NAME}* не найдено в PM2.`);
+            remainingText = remainingText.substring(MAX_MESSAGE_LENGTH);
         }
-    });
-}
+        parts.push(part);
+    }
 
-/**
- * Перезапускает PM2 приложение.
- * @param {string} chatId - ID чата для отправки сообщения.
- */
-async function restartPm2App(chatId) {
-    await sendTelegramMessage(chatId, `Запрос на перезапуск *${PM2_APP_NAME}*...`);
-
-    pm2.restart(PM2_APP_NAME, async (err) => {
-        if (err) {
-            console.error(`Error restarting ${PM2_APP_NAME}:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 Ошибка при перезапуске *${PM2_APP_NAME}*: ${err.message}`);
-            return;
-        }
-        await sendTelegramMessage(chatId, `🟢 *${PM2_APP_NAME}* успешно запрошен на перезапуск.`);
-    });
-}
-
-/**
- * Останавливает PM2 приложение.
- * @param {string} chatId - ID чата для отправки сообщения.
- */
-async function stopPm2App(chatId) {
-    pm2.list(async (err, list) => {
-        if (err) {
-            console.error(`Error listing PM2 processes for stop check:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 Ошибка при проверке статуса PM2 для остановки: ${err.message}`);
-            return;
-        }
-
-        const app = list.find(p => p.name === PM2_APP_NAME);
-
-        // Проверяем, если приложение уже остановлено или не найдено
-        if (!app || app.pm2_env.status === 'stopped' || app.pm2_env.status === 'stopped_waiting') {
-            await sendTelegramMessage(chatId, `ℹ️ Сервер *${PM2_APP_NAME}* уже остановлен и не запущен.`);
-            return;
-        }
-
-        await sendTelegramMessage(chatId, `Запрос на остановку *${PM2_APP_NAME}*...`);
-
-        pm2.stop(PM2_APP_NAME, async (err) => {
-            if (err) {
-                console.error(`Error stopping ${PM2_APP_NAME}:`, err.message);
-                await sendTelegramMessage(chatId, `🔴 Ошибка при остановке *${PM2_APP_NAME}*: ${err.message}`);
-                return;
+    // Отправляем каждую часть сообщения
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        try {
+            // Применяем MarkdownV2 для форматирования кода, если это первая часть, добавляем переданные опции
+            const currentOptions = i === 0 ? { parse_mode: 'MarkdownV2', ...options } : { parse_mode: 'MarkdownV2' };
+            await bot.sendMessage(chatId, `\`\`\`\n${part}\n\`\`\``, currentOptions);
+            console.log('Message part sent to Telegram.');
+        } catch (error) {
+            // Если MarkdownV2 вызывает ошибку, пробуем отправить без него
+            console.error('Error sending message to Telegram (MarkdownV2 failed):', error.response ? error.response.data : error.message);
+            try {
+                const currentOptions = i === 0 ? options : {}; // Передаем опции только для первой части
+                await bot.sendMessage(chatId, part, currentOptions);
+                console.log('Message part sent without MarkdownV2 due to error.');
+            } catch (fallbackError) {
+                // Если и это не удалось, логируем окончательную ошибку
+                console.error('Fallback send failed:', fallbackError.response ? fallbackError.response.data : fallbackError.message);
             }
-            await sendTelegramMessage(chatId, `⚫️ *${PM2_APP_NAME}* успешно запрошен на остановку.`);
-        });
-    });
+        }
+    }
 }
 
-/**
- * Запускает PM2 приложение.
- * @param {string} chatId - ID чата для отправки сообщения.
- */
-async function startPm2App(chatId) {
-    pm2.list(async (err, list) => {
-        if (err) {
-            console.error(`Error listing PM2 processes for start check:`, err.message);
-            await sendTelegramMessage(chatId, `🔴 Ошибка при проверке статуса PM2 для запуска: ${err.message}`);
-            return;
-        }
-
-        const app = list.find(p => p.name === PM2_APP_NAME);
-
-        if (app && app.pm2_env.status === 'online') {
-            await sendTelegramMessage(chatId, `ℹ️ Сервер *${PM2_APP_NAME}* уже запущен.`);
-            return;
-        }
-
-        await sendTelegramMessage(chatId, `Запрос на запуск *${PM2_APP_NAME}*...`);
-
-        pm2.start(PM2_APP_NAME, async (err) => {
-            if (err) {
-                console.error(`Error starting ${PM2_APP_NAME}:`, err.message);
-                await sendTelegramMessage(chatId, `🔴 Ошибка при запуске *${PM2_APP_NAME}*: ${err.message}`);
-                return;
-            }
-            await sendTelegramMessage(chatId, `🟢 *${PM2_APP_NAME}* успешно запрошен на запуск.`);
+// --- Функции для отправки сообщений с определенной клавиатурой ---
+// Эта функция отправляет сообщение и прикрепляет к нему кастомную клавиатуру.
+async function sendMessageWithKeyboard(chatId, text, keyboard, options = {}) {
+    try {
+        await bot.sendMessage(chatId, text, {
+            reply_markup: keyboard.reply_markup, // Важно: reply_markup должен быть вложен в объект опций
+            ...options // Позволяет переопределять или добавлять другие опции, например parse_mode
         });
-    });
+    } catch (error) {
+        console.error('Error sending message with keyboard:', error.response ? error.response.data : error.message);
+        // В случае ошибки при отправке клавиатуры, отправляем только текст
+        await sendTelegramMessage(chatId, text, false, options);
+    }
 }
 
-/**
- * Получает список всех PM2 приложений и отправляет его в Telegram.
- * @param {string} chatId - ID чата для отправки сообщения.
- */
-async function listAllPm2Apps(chatId) {
-    await sendTelegramMessage(chatId, 'Запрашиваю список всех приложений PM2...');
+// --- Общие опции для всех клавиатур ---
+const keyboardOptions = {
+    resize_keyboard: true, // Клавиатура будет автоматически подстраиваться под размер экрана
+    one_time_keyboard: false // Клавиатура будет оставаться после использования
+};
 
-    pm2.list(async (err, list) => {
-        if (err) {
-            await sendTelegramMessage(chatId, `🔴 Ошибка при получении списка приложений PM2: ${err.message}`);
-            console.error('Error listing all PM2 processes:', err.message);
-            return;
-        }
+// --- Определение основных клавиатур ---
+const mainKeyboard = {
+    reply_markup: {
+        keyboard: [
+            [{ text: '🛠️ Управление' }, { text: '📊 Мониторинг' }],
+            [{ text: '❓ Помощь' }]
+        ],
+        ...keyboardOptions
+    }
+};
 
-        if (list.length === 0) {
-            await sendTelegramMessage(chatId, 'В PM2 не найдено запущенных приложений.');
-            return;
-        }
+const managementKeyboard = {
+    reply_markup: {
+        keyboard: [
+            [{ text: '🔄 Перезапустить сервер' }],
+            [{ text: '⏹️ Остановить сервер' }, { text: '▶️ Запустить сервер' }],
+            [{ text: '⬅️ Назад в Главное меню' }] // Кнопка для возврата
+        ],
+        ...keyboardOptions
+    }
+};
 
-        let message = '📋 Список всех приложений PM2:\n\n';
-        list.forEach(app => {
-            message += `Наименование приложения: \`${app.name}\`\n`;
-            message += `ID: \`${app.pm_id}\`\n`;
-            message += `Статус: \`${app.pm2_env.status}\`\n`;
-            // Используем новую функцию для форматирования uptime
-            message += `Время работы: ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
-            message += `Кол-во перезапусков: \`${app.pm2_env.restart_time}\`\n`;
-            message += `Память: \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
-            message += `CPU: \`${app.monit.cpu}%\`\n`;
-            message += `\n`;
-        });
+const monitoringKeyboard = {
+    reply_markup: {
+        keyboard: [
+            [{ text: '📈 Статус приложения' }, { text: '📄 Последние 20 логов' }],
+            [{ text: '🩺 Проверить систему' }, { text: '📋 Список всех приложений' }],
+            [{ text: '⬅️ Назад в Главное меню' }] // Кнопка для возврата
+        ],
+        ...keyboardOptions
+    }
+};
 
-        await sendTelegramMessage(chatId, message);
-    });
-}
-
-/**
- * Подключается к демону PM2 и начинает прослушивать события.
- * Отправляет уведомления в Telegram о важных событиях приложения.
- */
-function connectAndListenPm2Events() {
-    pm2.connect(function (err) {
-        if (err) {
-            console.error('Error connecting to PM2:', err.message);
-            sendTelegramMessage(CHAT_ID, `🔴 Ошибка подключения бота к PM2: ${err.message}`, true);
-            return;
-        }
-        console.log('Connected to PM2 daemon.');
-
-        pm2.launchBus(function (err, bus) {
-            if (err) {
-                console.error('Error launching PM2 bus:', err.message);
-                sendTelegramMessage(CHAT_ID, `🔴 Ошибка прослушивания событий PM2: ${err.message}`, true);
-                return;
-            }
-
-            bus.on('process:event', function (data) {
-                // Отслеживаем события только для нашего конкретного приложения
-                if (data.process.name === PM2_APP_NAME) {
-                    let message = `📊 PM2 уведомление для *${PM2_APP_NAME}*: \n`;
-                    switch (data.event) {
-                        case 'stop':
-                            message += `🔴 *ПРИЛОЖЕНИЕ ОСТАНОВЛЕНО!* (Status: \`${data.process.status}\`)`;
-                            break;
-                        case 'restart':
-                            message += `🟡 *ПРИЛОЖЕНИЕ ПЕРЕЗАПУЩЕНО!* (Status: \`${data.process.status}\`)`;
-                            break;
-                        case 'exit':
-                            message += `💔 *ПРИЛОЖЕНИЕ ВЫШЛО ИЗ СТРОЯ!* (Status: \`${data.process.status}\`)`;
-                            break;
-                        case 'online':
-                            message += `🟢 *ПРИЛОЖЕНИЕ ЗАПУЩЕНО И РАБОТАЕТ!* (Status: \`${data.process.status}\`)`;
-                            break;
-                        default:
-                            message += `ℹ️ Неизвестное событие: \`${data.event}\` (Status: \`${data.process.status}\`)`;
-                            break;
-                    }
-                    sendTelegramMessage(CHAT_ID, message, true); // Отправляем уведомление
-                }
-            });
-        });
-    });
-}
-
-// Экспортируем функции для использования в index.js
+// Экспортируем все необходимые сущности для использования в других модулях
 module.exports = {
-    checkPm2AppStatus,
-    restartPm2App,
-    stopPm2App,
-    startPm2App,
-    listAllPm2Apps,
-    connectAndListenPm2Events
+    bot,
+    sendTelegramMessage,
+    sendMessageWithKeyboard,
+    userStates,
+    mainKeyboard,
+    managementKeyboard,
+    monitoringKeyboard
 };
