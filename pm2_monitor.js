@@ -10,6 +10,31 @@ const MEMORY_THRESHOLD_MB = parseInt(process.env.MEMORY_THRESHOLD_MB, 10);
 const CHAT_ID = process.env.CHAT_ID; // Chat ID для отправки уведомлений о событиях PM2
 
 /**
+ * Форматирует uptime в удобный вид: дни, часы, минуты.
+ * @param {number} uptimeMs - Время в миллисекундах.
+ * @returns {string} - Форматированная строка (например, "2 дн. 5 ч. 30 мин" или "45 мин").
+ */
+function formatUptime(uptimeMs) {
+    if (!uptimeMs) return 'N/A';
+
+    const uptimeSeconds = uptimeMs / 1000;
+    const days = Math.floor(uptimeSeconds / 86400);
+    const hours = Math.floor((uptimeSeconds % 86400) / 3600);
+    const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+
+    let uptimeStr = '';
+    if (days > 0) {
+        uptimeStr += `${days} дн. `;
+    }
+    if (hours > 0 || days > 0) { // Показываем часы, если есть дни или часы > 0
+        uptimeStr += `${hours} ч. `;
+    }
+    uptimeStr += `${minutes} мин`;
+
+    return uptimeStr.trim(); // Убираем лишние пробелы
+}
+
+/**
  * Проверяет статус конкретного PM2 приложения и отправляет его в Telegram.
  * @param {string} chatId - ID чата для отправки сообщения.
  */
@@ -26,8 +51,8 @@ async function checkPm2AppStatus(chatId) {
         if (app) {
             let statusMessage = `📊 Статус *${PM2_APP_NAME}*:\n`;
             statusMessage += `   Статус: \`${app.pm2_env.status}\`\n`;
-            // Рассчитываем uptime в минутах
-            statusMessage += `   Uptime: ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
+            // Используем новую функцию для форматирования uptime
+            statusMessage += `   Uptime: ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
             statusMessage += `   Перезапусков: \`${app.pm2_env.restart_time}\`\n`;
             statusMessage += `   Память: \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
             statusMessage += `   CPU: \`${app.monit.cpu}%\`\n`;
@@ -153,7 +178,8 @@ async function listAllPm2Apps(chatId) {
             message += `*Имя:* \`${app.name}\`\n`;
             message += `   *ID:* \`${app.pm_id}\`\n`;
             message += `   *Статус:* \`${app.pm2_env.status}\`\n`;
-            message += `   *Uptime:* ${app.pm2_env.pm_uptime ? (Math.round((Date.now() - app.pm2_env.pm_uptime) / 1000 / 60)) + ' мин' : 'N/A'}\n`;
+            // Используем новую функцию для форматирования uptime
+            message += `   *Uptime:* ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
             message += `   *Перезапусков:* \`${app.pm2_env.restart_time}\`\n`;
             message += `   *Память:* \`${(app.monit.memory / 1024 / 1024).toFixed(2)} MB\`\n`;
             message += `   *CPU:* \`${app.monit.cpu}%\`\n`;
