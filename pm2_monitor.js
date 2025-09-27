@@ -49,7 +49,7 @@ async function checkPm2AppStatus(chatId) {
         const app = list.find(p => p.name === PM2_APP_NAME); // Находим наше приложение по имени
 
         if (app) {
-            let statusMessage = `📊 Наименование приложения *${PM2_APP_NAME}*:\n`;
+            let statusMessage = `📊 Наименование приложения - ${PM2_APP_NAME}:\n`;
             statusMessage += `   Статус: \`${app.pm2_env.status}\`\n`;
             // Используем новую функцию для форматирования uptime
             statusMessage += `   Время работы: ${formatUptime(Date.now() - app.pm2_env.pm_uptime)}\n`;
